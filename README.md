@@ -9,12 +9,17 @@ Its Git ancestry starts directly from the original repository commit
 
 The active Python files are the untouched original training core. They still
 implement the paper's original movement tasks and are retained only as the
-behavioral baseline for the rebuild. The lightweight Phase A identity check is
-complete: Git ancestry, the original training core, the mRNNTorch gitlink, the
-external archive boundary, and the required full10/heldout5 separation were
-confirmed. Phase A intentionally added no runtime package, configuration,
-tests, runner, or device restriction. Geometry generation, environments,
-training code, and runners have not been implemented yet.
+behavioral baseline for the rebuild. The prior Phase A completion status was
+discarded and Phase A was rerun from clean commit `fa86e3c` on 2026-07-26. The
+rerun reconfirmed Git ancestry, the original training core, the mRNNTorch
+gitlink, the external archive boundary, and the required full10/heldout5
+separation. Phase A added no runtime package, configuration, tests, or runner.
+Geometry generation, environments, training code, and runners have not been
+implemented yet.
+
+CPU is the user-selected baseline backend. Phase B and all later project work
+will be executed on a fresh AutoDL instance using the pinned CPU environment;
+CUDA is not part of the baseline result lineage.
 
 Do not run training from this checkout until the implementation and gates in
 `PROJECT_PROTOCOL.md` have been completed and reviewed.
@@ -47,6 +52,6 @@ keep the project focused. They remain byte-exact in Git history at the source
 commit and can be inspected with `git show` when a protocol step explicitly
 requires them.
 
-The next implementation step is Phase B in `PROJECT_PROTOCOL.md`: geometry,
-linear arc-length timing, trajectory figures, and geometry/time/workspace
-audits. No training is authorized.
+The next implementation step is Phase B in `PROJECT_PROTOCOL.md`, executed on
+the AutoDL CPU server: geometry, linear arc-length timing, trajectory figures,
+and geometry/time/workspace audits. No training is authorized.

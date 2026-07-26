@@ -32,6 +32,12 @@ Phase A does not maintain a manual whole-project checksum file. Final delivery
 and actual run archives must generate hashes automatically from the files they
 contain.
 
+The user has frozen CPU as the baseline backend. Phase B and all later project
+implementation, tests, audits, and eventual baseline runs are executed on the
+fresh AutoDL instance with the pinned CPU environment. CUDA is not part of the
+baseline result lineage unless a later protocol decision explicitly creates a
+separate experiment.
+
 ## Reading order
 
 1. `AGENTS.md`
@@ -78,9 +84,11 @@ git -C mRNNTorch status --short
 
 Stop on unexplained changes. Never modify the immutable source checkout.
 
-## Completed gate: Phase A
+## Completed gate: Phase A rerun
 
-Phase A was completed without running training:
+The prior Phase A completion status was discarded. Phase A was rerun from the
+clean commit `fa86e3ce918fc4c1ae1f6ec9304a3754b515f687` on 2026-07-26 without
+running training:
 
 1. Git ancestry and the original baseline commit were confirmed;
 2. the six original training-core files remain unchanged;
@@ -92,12 +100,14 @@ Phase A was completed without running training:
 
 The original training core and `mRNNTorch` were not modified. No checkpoint was
 loaded and no training or MotorNet closed-loop run was started. Phase A added
-no runtime code, configuration schema, test suite, runner, device restriction,
-or manually maintained checksum manifest.
+no runtime code, configuration schema, test suite, runner, or manually
+maintained checksum manifest. The CPU backend decision is an explicit user
+decision recorded for subsequent server phases, not a Phase A runtime action.
 
 ## Immediate next step
 
-Start Phase B of `PROJECT_PROTOCOL.md` only:
+After creating and verifying an auditable upload package, start Phase B of
+`PROJECT_PROTOCOL.md` on the fresh AutoDL CPU server only:
 
 1. implement the canonical primitives and digits 0-9 from sections 5 and 6;
 2. implement linear arc-length timing with one join sample and C0 continuity;

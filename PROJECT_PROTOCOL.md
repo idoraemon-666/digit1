@@ -1004,9 +1004,9 @@ configurations/digit_original_protocol_composition.json
 configurations/digit_original_protocol_transfer5.json
 ```
 
-`full10` 与 `heldout5` 的配置和目录必须分离。设备类型是运行环境和复现信息，不是本阶段的科学假设；正式训练前统一选择并冻结实际设备后端，每次运行如实记录，阶段 A 不得自行锁定为 CPU 或 CUDA。
+`full10` 与 `heldout5` 的配置和目录必须分离。用户已将 CPU 冻结为本项目的基准设备后端；从阶段 B 开始，项目实现、测试、审计和后续基准运行均在新的 AutoDL 实例上使用固定 CPU 环境执行并如实记录。CUDA 不属于基准结果谱系；如后续需要使用 CUDA，必须通过新的协议决定建立独立实验，不得与 CPU 基准混合。
 
-仅当对应代码、配置和本地测试均已完成后，才创建独立 runner：
+仅当对应代码、配置和服务器测试均已完成后，才创建独立 runner：
 
 ```text
 server/run_digit_original_protocol_geometry_audit.sh
