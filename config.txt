@@ -1,2 +1,0 @@
-model_name=rnn256_softplus_sd1e-3_ma1e-2
-experiment=network_muscle_mode_similarity

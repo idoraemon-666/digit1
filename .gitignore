@@ -1,0 +1,13 @@
+/docs/paper.pdf
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/artifacts/
+/runs/
+/checkpoints/
+/results/
+/logs/
+/tmp/
+/*.bundle
+/*.tar.gz
+
