@@ -9,8 +9,12 @@ Its Git ancestry starts directly from the original repository commit
 
 The active Python files are the untouched original training core. They still
 implement the paper's original movement tasks and are retained only as the
-behavioral baseline for the rebuild. New-protocol geometry, environments,
-tests, configurations, and runners have not been implemented yet.
+behavioral baseline for the rebuild. The lightweight Phase A identity check is
+complete: Git ancestry, the original training core, the mRNNTorch gitlink, the
+external archive boundary, and the required full10/heldout5 separation were
+confirmed. Phase A intentionally added no runtime package, configuration,
+tests, runner, or device restriction. Geometry generation, environments,
+training code, and runners have not been implemented yet.
 
 Do not run training from this checkout until the implementation and gates in
 `PROJECT_PROTOCOL.md` have been completed and reviewed.
@@ -34,11 +38,15 @@ Do not run training from this checkout until the implementation and gates in
 - `server/`: environment construction files only.
 - `NEXT_SESSION_HANDOFF.md`: exact continuation point and hard stop lines.
 
+The `digit_writing/`, `configurations/`, and `tests/` paths will be created
+incrementally when their corresponding implementation phase begins. They are
+not pre-populated during Phase A.
+
 Original analysis and experiment scripts are absent from the active tree to
 keep the project focused. They remain byte-exact in Git history at the source
 commit and can be inspected with `git show` when a protocol step explicitly
 requires them.
 
-The next implementation step is Phase A in `PROJECT_PROTOCOL.md`. No training
-is authorized during that phase.
-
+The next implementation step is Phase B in `PROJECT_PROTOCOL.md`: geometry,
+linear arc-length timing, trajectory figures, and geometry/time/workspace
+audits. No training is authorized.
