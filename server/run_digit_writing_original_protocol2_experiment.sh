@@ -95,6 +95,7 @@ cp -a "$OUTPUT_DIR" "$RUN_ROOT/output"
 (
   cd "$RUN_ROOT"
   find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+  sha256sum -c SHA256SUMS
 )
 cd "$WORK_ROOT"
 tar -czf "$(basename "$RUN_ROOT").tar.gz" "$(basename "$RUN_ROOT")"

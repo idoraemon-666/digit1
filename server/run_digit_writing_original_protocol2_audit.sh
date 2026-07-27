@@ -82,6 +82,13 @@ TEST_TEE_EXIT="${TEST_CODES[1]}"
 printf 'TEST_EXIT=%s\nTEST_TEE_EXIT=%s\n' "$TEST_EXIT" "$TEST_TEE_EXIT" > "$RUN_ROOT/test_exit_codes.txt"
 test "$TEST_EXIT" -eq 0
 test "$TEST_TEE_EXIT" -eq 0
+grep -q '^Ran 32 tests in ' "$RUN_ROOT/tests.log"
+grep -q '^OK$' "$RUN_ROOT/tests.log"
+if grep -q 'skipped=' "$RUN_ROOT/tests.log"; then
+  echo 'ABORT: the required server test set contains skipped tests.' >&2
+  exit 1
+fi
+printf 'TEST_COUNT=32\nSKIPPED_TESTS=0\n' > "$RUN_ROOT/test_summary.txt"
 
 set +e
 (
