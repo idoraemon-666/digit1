@@ -40,7 +40,6 @@ from math import comb
 from pathlib import Path
 from typing import Iterable
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -409,6 +408,12 @@ def _rigid_shape_distance(a: np.ndarray, b: np.ndarray) -> float:
 def self_test() -> None:
     digits = build_digit_segments_units()
     assert set(digits) == set(range(10))
+    assert math.isclose(
+        GLOBAL_SCALE_M_PER_UNIT,
+        0.06410256410256411,
+        rel_tol=0.0,
+        abs_tol=1e-16,
+    )
 
     for digit, segments in digits.items():
         assert np.allclose(segments[0].points_units[0], 0.0, atol=1e-12)
@@ -462,15 +467,23 @@ def self_test() -> None:
     reflected_lr = p8[::-1].copy()
     reflected_lr[:, 0] *= -1.0
     assert float(np.max(np.linalg.norm(p8 - reflected_lr, axis=1))) < 1e-10
+    unique8 = p8[:-1]
+    reflected_tb = unique8.copy()
+    reflected_tb[:, 1] = -0.96 - reflected_tb[:, 1]
+    shifted8 = np.roll(unique8, -(len(unique8) // 2), axis=0)
+    assert float(np.max(np.linalg.norm(shifted8 - reflected_tb, axis=1))) < 1e-10
 
     # Sampling.
     for speed in TRAIN_SPEEDS_MPS.values():
+        sampled = {digit: sample_digit(digit, speed) for digit in range(10)}
         for digit in range(10):
-            result = sample_digit(digit, speed)
+            result = sampled[digit]
             path = result["path_m"]
             assert np.isfinite(path).all()
             assert np.allclose(path[0], 0.0, atol=1e-12)
             assert result["movement_intervals"] >= 1
+        assert sampled[2]["segments"][0]["intervals"] == sampled[3]["segments"][0]["intervals"]
+        assert sampled[3]["segments"][1]["intervals"] == sampled[5]["segments"][2]["intervals"]
 
     print("All self-tests passed.")
 
@@ -550,6 +563,8 @@ def build_audit() -> dict[str, object]:
 
 
 def render_plots(output_dir: Path) -> None:
+    import matplotlib.pyplot as plt
+
     output_dir.mkdir(parents=True, exist_ok=True)
     digits = build_digit_segments_units()
 

@@ -228,7 +228,7 @@ ps -p PID -o pid=,etime=,etimes=,%cpu=,%mem=,rss=,stat=,cmd=
 `test_losses.txt` 有 `N` 行时，最近完成的验证 batch 为 `(N-1)*500`：
 
 ```bash
-FULL10_DIR=/root/autodl-tmp/digit_writing_original_protocol_4b8b1db/runs/digit_original_protocol/full10/dev42
+FULL10_DIR=/root/autodl-tmp/digit_writing_original_protocol_4b8b1db/runs/digit_writing_original_protocol2/full10/dev42
 wc -l "$FULL10_DIR/test_losses.txt"
 tail -n 12 "$FULL10_DIR/test_losses.txt"
 stat -c '%y %s %n' "$FULL10_DIR/test_losses.txt" "$FULL10_DIR/best_checkpoint.pt"

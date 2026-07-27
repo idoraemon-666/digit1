@@ -1,4 +1,4 @@
-"""MotorNet environments for the original-protocol digit task."""
+"""MotorNet environments for digit_writing_original_protocol2."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from digit_writing.geometry import (
 DEFAULT_GEOMETRY_CONFIG = (
     Path(__file__).resolve().parent
     / "configurations"
-    / "digit_original_protocol_geometry.json"
+    / "digit_writing_original_protocol2_geometry.json"
 )
 
 
@@ -151,7 +151,7 @@ class DigitWritingEnv(env.Environment):
             trajectory_points, dtype=fingertip.dtype, device=self.device
         )
         self.movement_intervals = self.traj.shape[1] - 1
-        self.movement_time = self.movement_intervals
+        self.movement_time = self.traj.shape[1]
         self._build_trial_inputs(fingertip, angle_values)
 
         action = th.zeros(
@@ -196,7 +196,7 @@ class DigitWritingEnv(env.Environment):
         self.stable_time = config.stable_steps
         self.hold_time = config.hold_steps
         movement_start = self.stable_time + self.delay_time
-        movement_end = movement_start + self.movement_intervals
+        movement_end = movement_start + self.traj.shape[1]
         hold_end = movement_end + self.hold_time
         self.epoch_bounds = {
             "stable": (0, self.stable_time),

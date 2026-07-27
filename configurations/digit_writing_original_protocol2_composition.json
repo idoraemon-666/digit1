@@ -1,0 +1,24 @@
+{
+  "protocol": "digit_writing_original_protocol2",
+  "run_kind": "composition",
+  "seed": 42,
+  "device": "cpu",
+  "source_checkpoint": "runs/digit_writing_original_protocol2/full10/dev42/best_checkpoint.pt",
+  "digit_group": [0, 4, 6, 9, 8],
+  "leave_one_out": true,
+  "batch_size": 8,
+  "direction_indices": [0, 4, 8, 12, 16, 20, 24, 28],
+  "validation_speed_index": 9,
+  "custom_delay": 150,
+  "iterations": 250,
+  "coefficient_learning_rate": 0.1,
+  "network_noise": false,
+  "position_loss": {
+    "type": "phase_normalized_l1",
+    "stable_weight": 0.1,
+    "delay_weight": 0.1,
+    "movement_weight": 0.6,
+    "hold_weight": 0.2
+  },
+  "output_directory": "runs/digit_writing_original_protocol2/composition/dev42"
+}

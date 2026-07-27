@@ -166,7 +166,10 @@ class DigitEnvironmentTests(unittest.TestCase):
 
                 self.assertEqual(env.delay_time, expected_delay)
                 self.assertEqual(movement_start, stable_end + expected_delay)
-                self.assertEqual(movement_end - movement_start, env.movement_intervals)
+                self.assertEqual(
+                    movement_end - movement_start,
+                    env.movement_intervals + 1,
+                )
                 self.assertEqual(env.traj.shape[1], env.movement_intervals + 1)
                 self.assertEqual(hold_start, movement_end)
                 self.assertEqual(hold_end - hold_start, env.geometry_config.hold_steps)
@@ -177,6 +180,10 @@ class DigitEnvironmentTests(unittest.TestCase):
                 np.testing.assert_allclose(
                     self.as_numpy(env._target_at(movement_start)),
                     self.as_numpy(env.traj[:, 0]),
+                )
+                np.testing.assert_allclose(
+                    self.as_numpy(env._target_at(movement_end - 1)),
+                    self.as_numpy(env.traj[:, -1]),
                 )
                 np.testing.assert_allclose(
                     self.as_numpy(env._target_at(hold_start)),
@@ -196,6 +203,7 @@ class DigitEnvironmentTests(unittest.TestCase):
             },
         )
         movement_start, movement_end = env.epoch_bounds["movement"]
+        hold_start = env.epoch_bounds["hold"][0]
         goals = {}
         timestep = 0
         terminated = False
@@ -205,7 +213,7 @@ class DigitEnvironmentTests(unittest.TestCase):
             self.assertEqual(tuple(obs.shape), (2, 28))
             self.assertTrue(bool(th.isfinite(obs).all()))
             self.assertTrue(bool(th.isfinite(info["goal"]).all()))
-            if timestep in {movement_start, movement_end}:
+            if timestep in {movement_start, movement_end - 1, hold_start}:
                 goals[timestep] = info["goal"].clone()
             timestep += 1
 
@@ -214,7 +222,10 @@ class DigitEnvironmentTests(unittest.TestCase):
             self.as_numpy(goals[movement_start]), self.as_numpy(env.traj[:, 0])
         )
         np.testing.assert_allclose(
-            self.as_numpy(goals[movement_end]), self.as_numpy(env.traj[:, -1])
+            self.as_numpy(goals[movement_end - 1]), self.as_numpy(env.traj[:, -1])
+        )
+        np.testing.assert_allclose(
+            self.as_numpy(goals[hold_start]), self.as_numpy(env.traj[:, -1])
         )
 
 

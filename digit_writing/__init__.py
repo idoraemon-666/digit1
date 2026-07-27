@@ -1,1 +1,1 @@
-"""Digit-specific additions to the original movement-control repository."""
+"""Digit-specific additions for digit_writing_original_protocol2."""

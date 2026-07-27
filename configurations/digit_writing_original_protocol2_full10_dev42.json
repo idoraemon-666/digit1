@@ -1,11 +1,11 @@
 {
-  "protocol": "digit_original_protocol",
+  "protocol": "digit_writing_original_protocol2",
   "run_kind": "base_training",
   "variant": "full10",
   "seed": 42,
   "validation_seed": 1042,
   "device": "cpu",
-  "geometry_config": "configurations/digit_original_protocol_geometry.json",
+  "geometry_config": "configurations/digit_writing_original_protocol2_geometry.json",
   "train_digits": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
   "model": {
     "network": "rnn",
@@ -30,6 +30,13 @@
     "max_updates": 75000,
     "validation_interval": 500
   },
+  "position_loss": {
+    "type": "phase_normalized_l1",
+    "stable_weight": 0.1,
+    "delay_weight": 0.1,
+    "movement_weight": 0.6,
+    "hold_weight": 0.2
+  },
   "regularization": {
     "l1_rate": 0.001,
     "l1_weight": 0.001,
@@ -37,7 +44,7 @@
     "simple_dynamics_weight": 0.001
   },
   "output": {
-    "directory": "runs/digit_original_protocol/full10/dev42",
+    "directory": "runs/digit_writing_original_protocol2/full10/dev42",
     "best_checkpoint": "best_checkpoint.pt",
     "final_checkpoint": "final_continuation_checkpoint.pt"
   }

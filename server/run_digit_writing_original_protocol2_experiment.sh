@@ -5,8 +5,8 @@ if [[ "$#" -ne 2 ]]; then
   echo "usage: $0 CONFIG_PATH RUN_LABEL" >&2
   exit 2
 fi
-if [[ "${DIGIT_PROTOCOL_AUTHORIZED_RUN:-}" != "$2" ]]; then
-  echo "STOP: Phase E user authorization must name this exact experiment run." >&2
+if [[ "${DIGIT_PROTOCOL2_AUTHORIZED_RUN:-}" != "$2" ]]; then
+  echo "STOP: user authorization must name this exact project-2 experiment run." >&2
   exit 2
 fi
 
@@ -36,12 +36,14 @@ PY
 HEAD="$(git -C "$REPO" rev-parse HEAD)"
 SHORT_HEAD="${HEAD:0:7}"
 SEED="$($PYTHON -c "import json; print(json.load(open('$CONFIG'))['seed'])")"
+PROTOCOL="$($PYTHON -c "import json; print(json.load(open('$CONFIG'))['protocol'])")"
+test "$PROTOCOL" = "digit_writing_original_protocol2"
 OUTPUT_RELATIVE="$($PYTHON -c "import json; c=json.load(open('$CONFIG')); print(c.get('output', {}).get('directory', c.get('output_directory')))" )"
 OUTPUT_DIR="$REPO/$OUTPUT_RELATIVE"
-RUN_ROOT="$WORK_ROOT/digit-writing-${RUN_LABEL}-${SHORT_HEAD}-seed${SEED}"
+RUN_ROOT="$WORK_ROOT/digit-writing-original-protocol2-${RUN_LABEL}-${SHORT_HEAD}-seed${SEED}"
 
 if [[ -e "$RUN_ROOT" || -e "$OUTPUT_DIR" ]]; then
-  echo "Refusing to overwrite an existing run directory." >&2
+  echo "Refusing to overwrite an existing project-2 run directory." >&2
   echo "RUN_ROOT=$RUN_ROOT" >&2
   echo "OUTPUT_DIR=$OUTPUT_DIR" >&2
   exit 1
@@ -62,6 +64,14 @@ printf '%s\n' "105cd0c6b153f0e80a2593e43b7ffec7cc1f5e33" > "$RUN_ROOT/original_b
 printf '%s\n' "$SEED" > "$RUN_ROOT/random_seed.txt"
 printf 'device=cpu\n' > "$RUN_ROOT/device.txt"
 "$PYTHON" -m pip freeze > "$RUN_ROOT/environment.freeze.txt"
+(
+  cd "$REPO"
+  git ls-files | while IFS= read -r path; do
+    if [[ -f "$path" ]]; then
+      sha256sum "$path"
+    fi
+  done
+) > "$RUN_ROOT/repository_tracked_sha256.txt"
 
 cd "$REPO"
 set +e
@@ -73,7 +83,7 @@ TEE_EXIT="${PIPE_STATUS[1]}"
 set -e
 printf 'RUN_EXIT=%s\nTEE_EXIT=%s\n' "$RUN_EXIT" "$TEE_EXIT" > "$RUN_ROOT/exit_codes.txt"
 if [[ "$RUN_EXIT" -ne 0 || "$TEE_EXIT" -ne 0 ]]; then
-  echo "PROTOCOL_EXPERIMENT_FAILED=1" >&2
+  echo "PROTOCOL2_EXPERIMENT_FAILED=1" >&2
   exit 1
 fi
 

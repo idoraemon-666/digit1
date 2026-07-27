@@ -1,4 +1,4 @@
-"""Figures and MotorNet workspace audit for the Phase B digit geometry."""
+"""Figures and MotorNet workspace audit for the final digit geometry."""
 
 from __future__ import annotations
 
@@ -233,6 +233,7 @@ def build_workspace_audit(config: GeometryConfig) -> dict[str, object]:
                         config.stable_steps
                         + max(config.delay_steps)
                         + trajectory.movement_intervals
+                        + 1
                         + config.hold_steps
                     ),
                     "maximum_abs_joint_velocity_rad_s": float(

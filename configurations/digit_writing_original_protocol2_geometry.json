@@ -1,14 +1,6 @@
 {
-  "geometry": {
-    "a": 0.035,
-    "b": 0.02625,
-    "H": 0.035,
-    "V": 0.06125,
-    "D_dx": 0.02625,
-    "D_dy": 0.0525,
-    "global_scale": 0.8791208791208792,
-    "arc_table_intervals": 65536
-  },
+  "geometry_source": "digit_writing/digit_geometry_final.py",
+  "global_scale_m_per_unit": 0.06410256410256411,
   "timing": {
     "dt_seconds": 0.01,
     "stable_steps": 25,

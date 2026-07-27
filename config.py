@@ -16,8 +16,8 @@ def config_parser():
 def load_protocol_config(path):
     with open(path, "r", encoding="utf-8") as handle:
         config = json.load(handle)
-    if config.get("protocol") != "digit_original_protocol":
-        raise ValueError("not an original-protocol digit configuration")
+    if config.get("protocol") != "digit_writing_original_protocol2":
+        raise ValueError("not a digit_writing_original_protocol2 configuration")
     return config
 
 

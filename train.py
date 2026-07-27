@@ -11,7 +11,15 @@ from pathlib import Path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from model import RNNPolicy, GRUPolicy
-from losses import l1_dist, l1_rate, l1_weight, l1_muscle_act, simple_dynamics
+from losses import (
+    detached_position_metrics,
+    l1_dist,
+    l1_muscle_act,
+    l1_rate,
+    l1_weight,
+    position_l1_metrics,
+    simple_dynamics,
+)
 from envs import DlyHalfReach, DlyHalfCircleClk, DlyHalfCircleCClk, DlySinusoid, DlySinusoidInv
 from envs import DlyFullReach, DlyFullCircleClk, DlyFullCircleCClk, DlyFigure8, DlyFigure8Inv
 from envs import ComposableEnv
@@ -98,6 +106,12 @@ def _write_json(path, value):
         handle.write("\n")
 
 
+def _append_jsonl(path, value):
+    with open(path, "a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(value, sort_keys=True))
+        handle.write("\n")
+
+
 def _checkpoint_payload(policy, optimizer, hp, update, validation_loss):
     return {
         "agent_state_dict": policy.state_dict(),
@@ -115,7 +129,9 @@ def _checkpoint_payload(policy, optimizer, hp, update, validation_loss):
     }
 
 
-def _run_validation(policy, hp, env_dict, network_noise=True):
+def _run_validation(
+    policy, hp, env_dict, network_noise=True, return_metrics=False
+):
     seed = hp.get("validation_seed")
     if seed is None:
         return do_eval(
@@ -123,6 +139,7 @@ def _run_validation(policy, hp, env_dict, network_noise=True):
             hp,
             env_dict=env_dict,
             network_noise=network_noise,
+            return_metrics=return_metrics,
         )
     with _fixed_rng(seed):
         return do_eval(
@@ -130,9 +147,12 @@ def _run_validation(policy, hp, env_dict, network_noise=True):
             hp,
             env_dict=env_dict,
             network_noise=network_noise,
+            return_metrics=return_metrics,
         )
 
-def do_eval(policy, hp, env_dict=None, network_noise=True):
+def do_eval(
+    policy, hp, env_dict=None, network_noise=True, return_metrics=False
+):
 
     if env_dict == None:
         env_dict = {
@@ -153,7 +173,8 @@ def do_eval(policy, hp, env_dict=None, network_noise=True):
     # Currently 10 speed conds during testing, 3 for training
     speed_conds = list(np.arange(0, 10))
 
-    total_test_loss = 0
+    total_metrics = None
+    condition_count = 0
     condition_losses = {}
     for env in env_dict:
         condition_loss = 0
@@ -172,9 +193,8 @@ def do_eval(policy, hp, env_dict=None, network_noise=True):
             obs, info = cur_env.reset(testing=True, options={"batch_size": 32, "reach_conds": np.arange(0, 32), "speed_cond": speed})
             terminated = False
 
-            # initial positions and targets
-            xy = [info["states"]["fingertip"][:, None, :]]
-            tg = [info["goal"][:, None, :]]
+            xy = []
+            tg = []
 
             timestep = 0
             # simulate whole episode
@@ -193,22 +213,31 @@ def do_eval(policy, hp, env_dict=None, network_noise=True):
             xy = torch.cat(xy, axis=1)
             tg = torch.cat(tg, axis=1)
 
-            # Implement loss function
-            loss = l1_dist(xy, tg)  # L1 loss on position
-            condition_loss += loss.item()
+            metrics = detached_position_metrics(
+                position_l1_metrics(xy, tg, cur_env.epoch_bounds)
+            )
+            if total_metrics is None:
+                total_metrics = {name: 0.0 for name in metrics}
+            for name, value in metrics.items():
+                total_metrics[name] += value
+            condition_count += 1
+            condition_loss += metrics["phase_normalized_position_l1"]
         condition_loss /= len(speed_conds)
         condition_losses[env] = condition_loss
-        total_test_loss += condition_loss
-    total_test_loss /= len(env_dict)
+    averaged_metrics = {
+        name: value / condition_count for name, value in total_metrics.items()
+    }
+    total_test_loss = averaged_metrics["phase_normalized_position_l1"]
 
     print("\n")
     print("Eval Results:")
     for env in condition_losses:
         print(f"Total Loss for Environment {env}| {condition_losses[env]}")
     print(f"Total Testing Loss: {total_test_loss}")
+    print(f"Position Metrics: {averaged_metrics}")
     print("\n")
-    
-    return total_test_loss
+
+    return averaged_metrics if return_metrics else total_test_loss
 
 
 
@@ -450,9 +479,8 @@ def train_2link(model_path, model_file, hp=None):
         obs, info = env.reset(options={"batch_size": hp["batch_size"]})
         terminated = False
 
-        # initial positions and targets
-        xy = [info["states"]["fingertip"][:, None, :]]
-        tg = [info["goal"][:, None, :]]
+        xy = []
+        tg = []
         muscle_acts = [info["states"]["muscle"][:, 0].unsqueeze(1)]
         hs = [h.unsqueeze(1)]
 
@@ -476,8 +504,8 @@ def train_2link(model_path, model_file, hp=None):
         muscle_acts = torch.cat(muscle_acts, axis=1)
         hs = torch.cat(hs, axis=1)
 
-        # Implement loss function
-        loss = l1_dist(xy, tg)  # L1 loss on position
+        position_metrics = position_l1_metrics(xy, tg, env.epoch_bounds)
+        loss = position_metrics["phase_normalized_position_l1"]
         loss += l1_rate(hs, hp["l1_rate"])
         loss += l1_weight(policy, hp["l1_weight"])
         loss += l1_muscle_act(muscle_acts, hp["l1_muscle_act"])
@@ -707,9 +735,8 @@ def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
         obs, info = env.reset(options={"batch_size": hp["batch_size"]})
         terminated = False
 
-        # initial positions and targets
-        xy = [info["states"]["fingertip"][:, None, :]]
-        tg = [info["goal"][:, None, :]]
+        xy = []
+        tg = []
         muscle_acts = [info["states"]["muscle"][:, 0].unsqueeze(1)]
         hs = [h.unsqueeze(1)]
 
@@ -733,8 +760,8 @@ def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
         muscle_acts = torch.cat(muscle_acts, axis=1)
         hs = torch.cat(hs, axis=1)
 
-        # Implement loss function
-        loss = l1_dist(xy, tg)  # L1 loss on position
+        position_metrics = position_l1_metrics(xy, tg, env.epoch_bounds)
+        loss = position_metrics["phase_normalized_position_l1"]
         loss += l1_rate(hs, hp["l1_rate"])
         loss += l1_weight(policy, hp["l1_weight"])
         loss += l1_muscle_act(muscle_acts, hp["l1_muscle_act"])
@@ -754,13 +781,24 @@ def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
         if (batch % interval == 0) and (batch != 0):
             mean_loss = sum(losses[-interval:]) / interval
             print("Batch {}/{} Done, mean policy loss: {}".format(batch, hp["epochs"], mean_loss))
+            _append_jsonl(
+                os.path.join(model_path, "training_position_metrics.jsonl"),
+                {"update": batch, **detached_position_metrics(position_metrics)},
+            )
 
         if (batch % hp["save_iter"] == 0):
             # Get test loss
-            test_loss = _run_validation(policy, hp, env_dict)
+            validation_metrics = _run_validation(
+                policy, hp, env_dict, return_metrics=True
+            )
+            test_loss = validation_metrics["phase_normalized_position_l1"]
             last_test_loss = test_loss
             test_losses.append(test_loss)
             np.savetxt(os.path.join(model_path, "test_losses.txt"), test_losses)
+            _append_jsonl(
+                os.path.join(model_path, "test_position_metrics.jsonl"),
+                {"update": batch, **validation_metrics},
+            )
             # If current test loss is better than previous, save model and update best loss
             if test_loss <= best_test_loss:
                 best_test_loss = test_loss
@@ -867,8 +905,8 @@ def train_subsets_held_out_base_model(
         env = env_class(effector=effector, **hp.get("env_kwargs", {}))
         obs, info = env.reset(options={"batch_size": hp["batch_size"]})
         terminated = False
-        xy = [info["states"]["fingertip"][:, None, :]]
-        tg = [info["goal"][:, None, :]]
+        xy = []
+        tg = []
         timestep = 0
         while not terminated:
             x, h, action = policy(obs, x, h)
@@ -878,7 +916,8 @@ def train_subsets_held_out_base_model(
             timestep += 1
         xy = torch.cat(xy, axis=1)
         tg = torch.cat(tg, axis=1)
-        loss = l1_dist(xy, tg)
+        position_metrics = position_l1_metrics(xy, tg, env.epoch_bounds)
+        loss = position_metrics["phase_normalized_position_l1"]
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(
@@ -891,12 +930,23 @@ def train_subsets_held_out_base_model(
             mean_loss = sum(losses[-interval:]) / interval
             print("Batch {}/{} Done, mean policy loss: {}".format(batch, hp["epochs"], mean_loss))
             np.savetxt(os.path.join(save_model_path, "losses.txt"), losses)
+            _append_jsonl(
+                os.path.join(save_model_path, "training_position_metrics.jsonl"),
+                {"update": batch, **detached_position_metrics(position_metrics)},
+            )
 
         if (batch % hp["save_iter"] == 0):
-            test_loss = _run_validation(policy, hp, env_dict)
+            validation_metrics = _run_validation(
+                policy, hp, env_dict, return_metrics=True
+            )
+            test_loss = validation_metrics["phase_normalized_position_l1"]
             last_test_loss = test_loss
             test_losses.append(test_loss)
             np.savetxt(os.path.join(save_model_path, "test_losses.txt"), test_losses)
+            _append_jsonl(
+                os.path.join(save_model_path, "test_position_metrics.jsonl"),
+                {"update": batch, **validation_metrics},
+            )
             if test_loss <= best_test_loss:
                 best_test_loss = test_loss
                 torch.save(
@@ -1064,7 +1114,7 @@ def train_compositional_env_base_model(
 
 def _require_cpu(config):
     if config["device"] != "cpu":
-        raise ValueError("the original-protocol baseline device must be cpu")
+        raise ValueError("the project-2 baseline device must be cpu")
 
 
 def _digit_env_dict(digits):
@@ -1109,7 +1159,7 @@ def _validate_base_config(config):
         or optimizer["learning_rate"] != 0.001
         or optimizer["grad_clip_norm"] != 1.0
     ):
-        raise ValueError("base optimizer does not match the original protocol")
+        raise ValueError("base optimizer does not match the project-2 protocol")
     training = config["training"]
     if (
         training["batch_size"] != 32
@@ -1124,6 +1174,14 @@ def _validate_base_config(config):
         "simple_dynamics_weight": 0.001,
     }:
         raise ValueError("base regularization does not match the protocol")
+    if config["position_loss"] != {
+        "type": "phase_normalized_l1",
+        "stable_weight": 0.1,
+        "delay_weight": 0.1,
+        "movement_weight": 0.6,
+        "hold_weight": 0.2,
+    }:
+        raise ValueError("base position loss does not match the final protocol")
 
 
 def _base_hp_from_config(config):
@@ -1182,7 +1240,7 @@ def load_digit_policy_checkpoint(checkpoint_path, expected_variant=None):
     )
     hp = checkpoint.get("hp")
     if hp is None:
-        raise ValueError("checkpoint does not contain the Phase D hyperparameters")
+        raise ValueError("checkpoint does not contain the project-2 hyperparameters")
     variant = checkpoint.get("variant")
     if expected_variant is not None and variant != expected_variant:
         raise ValueError(f"expected {expected_variant} checkpoint, got {variant}")
@@ -1233,6 +1291,14 @@ def _validate_transfer_config(config):
         or training["validation_interval"] != 500
     ):
         raise ValueError("transfer schedule does not match the original entry")
+    if config["position_loss"] != {
+        "type": "phase_normalized_l1",
+        "stable_weight": 0.1,
+        "delay_weight": 0.1,
+        "movement_weight": 0.6,
+        "hold_weight": 0.2,
+    }:
+        raise ValueError("transfer position loss does not match the final protocol")
 
 
 def train_digit_transfer5(config):
@@ -1247,8 +1313,12 @@ def train_digit_transfer5(config):
     source_config = source.get("protocol_config")
     if source_config is None:
         raise ValueError("heldout5 checkpoint is missing its protocol config")
+    if source_config.get("protocol") != "digit_writing_original_protocol2":
+        raise ValueError("transfer requires a project-2 heldout5 checkpoint")
     if config["geometry_config"] != source_config["geometry_config"]:
         raise ValueError("transfer geometry must match the heldout5 checkpoint")
+    if config["position_loss"] != source_config["position_loss"]:
+        raise ValueError("transfer position loss must match the heldout5 checkpoint")
 
     training = config["training"]
     output = config["output"]

@@ -1,4 +1,4 @@
-"""Thin Phase D entries for rule composition and digit-5 transfer."""
+"""Project-2 entries for rule composition and digit-5 transfer."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from losses import l1_dist
+from losses import detached_position_metrics, position_l1_metrics
 from train import (
     DIGIT_ENV_CLASSES,
     load_digit_policy_checkpoint,
@@ -25,35 +25,40 @@ def replace_rule_input(observation, rule_input):
     return torch.cat((rule_input, observation[:, 10:]), dim=-1)
 
 
-def _full_rule(coefficients, target_digit):
-    columns = []
-    source_column = 0
-    for digit in range(10):
-        if digit == target_digit:
-            columns.append(torch.zeros_like(coefficients[:, :1]))
-        else:
-            columns.append(coefficients[:, source_column : source_column + 1])
-            source_column += 1
-    return torch.cat(columns, dim=1)
+def _full_rule(coefficients, source_digits):
+    if coefficients.shape[1] != len(source_digits):
+        raise ValueError("coefficient columns must match the configured source digits")
+    basis = torch.eye(10, dtype=coefficients.dtype, device=coefficients.device)[
+        list(source_digits)
+    ]
+    return coefficients @ basis
 
 
-def prepare_composition(policy, target_digit, batch_size, learning_rate=0.1):
+def prepare_composition(
+    policy, target_digit, source_digits, batch_size, learning_rate=0.1
+):
     """Freeze a full10 policy and create independent per-direction coefficients."""
     if not 0 <= target_digit < 10:
         raise ValueError("target_digit must be in [0, 9]")
+    if target_digit in source_digits or len(source_digits) != 4:
+        raise ValueError("composition requires four non-target source digits")
     for parameter in policy.parameters():
         parameter.requires_grad_(False)
-    coefficients = torch.nn.Parameter(torch.ones((batch_size, 9)))
+    coefficients = torch.nn.Parameter(torch.ones((batch_size, len(source_digits))))
     optimizer = torch.optim.Adam((coefficients,), lr=learning_rate)
     return coefficients, optimizer
 
 
 def optimize_rule_composition(policy, config, target_digit):
-    """Optimize external rule coefficients using only closed-loop position L1."""
+    """Optimize four external rule coefficients using the final position loss."""
     batch_size = config["batch_size"]
+    source_digits = tuple(
+        digit for digit in config["digit_group"] if digit != target_digit
+    )
     coefficients, optimizer = prepare_composition(
         policy,
         target_digit,
+        source_digits,
         batch_size,
         learning_rate=config["coefficient_learning_rate"],
     )
@@ -82,7 +87,7 @@ def optimize_rule_composition(policy, config, target_digit):
         actions = []
         terminated = False
         timestep = 0
-        rule_input = _full_rule(coefficients, target_digit)
+        rule_input = _full_rule(coefficients, source_digits)
 
         while not terminated:
             observation = replace_rule_input(observation, rule_input)
@@ -95,7 +100,10 @@ def optimize_rule_composition(policy, config, target_digit):
 
         trial_xy = torch.cat(xy, dim=1)
         trial_target = torch.cat(targets, dim=1)
-        loss = l1_dist(trial_xy, trial_target)
+        position_metrics = position_l1_metrics(
+            trial_xy, trial_target, environment.epoch_bounds
+        )
+        loss = position_metrics["phase_normalized_position_l1"]
         training_losses.append(loss.item())
         if loss.item() < best_loss:
             best_loss = loss.item()
@@ -105,13 +113,15 @@ def optimize_rule_composition(policy, config, target_digit):
                 "target": trial_target.detach().clone(),
                 "action": torch.cat(actions, dim=1).detach().clone(),
                 "epoch_bounds": environment.epoch_bounds,
+                "source_digits": source_digits,
+                "position_metrics": detached_position_metrics(position_metrics),
             }
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
     best_trial["training_losses"] = training_losses
-    best_trial["best_position_l1"] = best_loss
+    best_trial["best_phase_normalized_position_l1"] = best_loss
     best_trial["target_digit"] = target_digit
     best_trial["final_coefficients"] = coefficients.detach().clone()
     best_trial["optimizer_state_dict"] = optimizer.state_dict()
@@ -132,8 +142,16 @@ def _validate_composition_config(config):
         raise ValueError("composition requires validation speed 9 and custom delay 150")
     if config["iterations"] != 250 or config["coefficient_learning_rate"] != 0.1:
         raise ValueError("composition requires 250 Adam iterations at learning rate 0.1")
-    if config["target_digits"] != list(range(10)):
-        raise ValueError("the formal composition batch must include all ten targets")
+    if config["digit_group"] != [0, 4, 6, 9, 8] or not config["leave_one_out"]:
+        raise ValueError("composition requires the frozen five-digit leave-one-out group")
+    if config["position_loss"] != {
+        "type": "phase_normalized_l1",
+        "stable_weight": 0.1,
+        "delay_weight": 0.1,
+        "movement_weight": 0.6,
+        "hold_weight": 0.2,
+    }:
+        raise ValueError("composition position loss does not match the final protocol")
 
 
 def run_composition_config(config):
@@ -144,6 +162,13 @@ def run_composition_config(config):
     policy, checkpoint = load_digit_policy_checkpoint(
         config["source_checkpoint"], expected_variant="full10"
     )
+    source_config = checkpoint.get("protocol_config")
+    if source_config is None:
+        raise ValueError("full10 checkpoint is missing its protocol config")
+    if source_config.get("protocol") != "digit_writing_original_protocol2":
+        raise ValueError("composition requires a project-2 full10 checkpoint")
+    if source_config.get("position_loss") != config["position_loss"]:
+        raise ValueError("composition position loss must match the full10 checkpoint")
     before = {name: tensor.detach().clone() for name, tensor in policy.state_dict().items()}
     output_dir = Path(config["output_directory"])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -152,17 +177,17 @@ def run_composition_config(config):
         handle.write("\n")
 
     runtime_config = dict(config)
-    runtime_config["geometry_config"] = checkpoint["protocol_config"]["geometry_config"]
+    runtime_config["geometry_config"] = source_config["geometry_config"]
     import motornet as mn
 
     runtime_config["effector_factory"] = lambda: mn.effector.RigidTendonArm26(
         mn.muscle.MujocoHillMuscle()
     )
     summary = {}
-    for target_digit in config["target_digits"]:
+    for target_digit in config["digit_group"]:
         result = optimize_rule_composition(policy, runtime_config, target_digit)
         torch.save(result, output_dir / f"digit_{target_digit}.pt")
-        summary[str(target_digit)] = result["best_position_l1"]
+        summary[str(target_digit)] = result["best_phase_normalized_position_l1"]
 
     after = policy.state_dict()
     for name, tensor in before.items():
@@ -171,7 +196,8 @@ def run_composition_config(config):
     with open(output_dir / "composition_summary.json", "w", encoding="utf-8") as handle:
         json.dump(
             {
-                "per_digit_best_position_l1": summary,
+                "digit_group": config["digit_group"],
+                "per_digit_best_phase_normalized_position_l1": summary,
                 "network_state_bitwise_unchanged": True,
             },
             handle,

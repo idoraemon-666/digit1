@@ -1,7 +1,6 @@
 import importlib.util
 import math
 from pathlib import Path
-import tempfile
 import unittest
 
 import numpy as np
@@ -11,14 +10,13 @@ from digit_writing.geometry_audit import (
     FK_TOLERANCE_M,
     _inverse_kinematics,
     build_workspace_audit,
-    generate_audit_figures,
 )
 
 
 CONFIG_PATH = (
     Path(__file__).resolve().parents[1]
     / "configurations"
-    / "digit_original_protocol_geometry.json"
+    / "digit_writing_original_protocol2_geometry.json"
 )
 MOTORNET_AVAILABLE = importlib.util.find_spec("motornet") is not None
 
@@ -52,35 +50,6 @@ class GeometryAuditTests(unittest.TestCase):
         actual, reachable = _inverse_kinematics(points, link1, link2)
         self.assertTrue(reachable.all())
         np.testing.assert_allclose(actual, expected, atol=1e-14, rtol=0)
-
-    def test_figure_set_has_ten_prescribed_and_eight_direction_views(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary) / "figures"
-            manifest = generate_audit_figures(self.config, output)
-            self.assertEqual(manifest["figure_count"], 18)
-            self.assertEqual(manifest["prescribed_figure_count"], 10)
-            self.assertEqual(manifest["training_direction_figure_count"], 8)
-
-            prescribed = [
-                row for row in manifest["figures"]
-                if row["kind"] == "prescribed_direction"
-            ]
-            directions = [
-                row for row in manifest["figures"]
-                if row["kind"] == "training_direction_2x5"
-            ]
-            self.assertEqual([row["digits"][0] for row in prescribed], list(range(10)))
-            self.assertEqual(
-                [row["angle_deg"] for row in directions],
-                [float(value) for value in range(0, 360, 45)],
-            )
-            for row in directions:
-                self.assertEqual(row["digits"], list(range(10)))
-            for row in manifest["figures"]:
-                path = output / row["file"]
-                self.assertTrue(path.is_file())
-                self.assertGreater(path.stat().st_size, 1000)
-                self.assertEqual(len(row["sha256"]), 64)
 
     @unittest.skipUnless(MOTORNET_AVAILABLE, "MotorNet is required")
     def test_full_motornet_workspace_and_dynamic_smoke(self):

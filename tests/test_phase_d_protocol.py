@@ -10,7 +10,13 @@ from unittest import mock
 
 import torch
 
-from losses import l1_dist, l1_muscle_act, l1_rate, l1_weight, simple_dynamics
+from losses import (
+    l1_muscle_act,
+    l1_rate,
+    l1_weight,
+    position_l1_metrics,
+    simple_dynamics,
+)
 from model import RNNPolicy
 
 try:
@@ -56,8 +62,8 @@ class PhaseDConfigurationTests(unittest.TestCase):
             return json.load(handle)
 
     def test_base_models_are_protocol_fixed_and_independent(self):
-        full10 = self.load("digit_original_protocol_full10_dev42.json")
-        heldout5 = self.load("digit_original_protocol_heldout5_dev42.json")
+        full10 = self.load("digit_writing_original_protocol2_full10_dev42.json")
+        heldout5 = self.load("digit_writing_original_protocol2_heldout5_dev42.json")
         self.assertEqual(full10["train_digits"], list(range(10)))
         self.assertEqual(heldout5["train_digits"], [0, 1, 2, 3, 4, 6, 7, 8, 9])
         self.assertNotEqual(full10["output"]["directory"], heldout5["output"]["directory"])
@@ -77,6 +83,16 @@ class PhaseDConfigurationTests(unittest.TestCase):
             self.assertEqual(config["training"]["max_updates"], 75000)
             self.assertEqual(config["training"]["validation_interval"], 500)
             self.assertEqual(
+                config["position_loss"],
+                {
+                    "type": "phase_normalized_l1",
+                    "stable_weight": 0.1,
+                    "delay_weight": 0.1,
+                    "movement_weight": 0.6,
+                    "hold_weight": 0.2,
+                },
+            )
+            self.assertEqual(
                 config["regularization"],
                 {
                     "l1_rate": 0.001,
@@ -87,9 +103,10 @@ class PhaseDConfigurationTests(unittest.TestCase):
             )
 
     def test_composition_configuration_reproduces_original_optimization(self):
-        config = self.load("digit_original_protocol_composition.json")
+        config = self.load("digit_writing_original_protocol2_composition.json")
         self.assertIn("full10", config["source_checkpoint"])
-        self.assertEqual(config["target_digits"], list(range(10)))
+        self.assertEqual(config["digit_group"], [0, 4, 6, 9, 8])
+        self.assertTrue(config["leave_one_out"])
         self.assertEqual(config["batch_size"], 8)
         self.assertEqual(config["direction_indices"], list(range(0, 32, 4)))
         self.assertEqual(config["validation_speed_index"], 9)
@@ -99,10 +116,10 @@ class PhaseDConfigurationTests(unittest.TestCase):
         self.assertFalse(config["network_noise"])
         if experiment_module is not None:
             source = inspect.getsource(experiment_module.run_composition_config)
-            self.assertIn('checkpoint["protocol_config"]', source)
+            self.assertIn('checkpoint.get("protocol_config")', source)
 
     def test_transfer_configuration_uses_only_heldout5_checkpoint(self):
-        config = self.load("digit_original_protocol_transfer5.json")
+        config = self.load("digit_writing_original_protocol2_transfer5.json")
         self.assertIn("heldout5", config["source_checkpoint"])
         self.assertEqual(config["target_digit"], 5)
         self.assertNotIn("composition", config["source_checkpoint"])
@@ -110,21 +127,23 @@ class PhaseDConfigurationTests(unittest.TestCase):
 
     def test_experiment_runners_require_exact_phase_e_authorization(self):
         generic = (
-            ROOT / "server" / "run_digit_original_protocol_experiment.sh"
+            ROOT / "server" / "run_digit_writing_original_protocol2_experiment.sh"
         ).read_text(encoding="utf-8")
-        self.assertIn("DIGIT_PROTOCOL_AUTHORIZED_RUN", generic)
-        self.assertIn("must name this exact experiment run", generic)
+        self.assertIn("DIGIT_PROTOCOL2_AUTHORIZED_RUN", generic)
+        self.assertIn("must name this exact project-2 experiment run", generic)
         self.assertIn("source_checkpoint.sha256", generic)
         self.assertIn("PYTHONDONTWRITEBYTECODE=1", generic)
         self.assertGreaterEqual(generic.count("status --porcelain"), 4)
         for name in (
-            "run_digit_original_protocol_full10_dev42.sh",
-            "run_digit_original_protocol_heldout5_dev42.sh",
-            "run_digit_original_protocol_composition.sh",
-            "run_digit_original_protocol_transfer5.sh",
+            "run_digit_writing_original_protocol2_full10_dev42.sh",
+            "run_digit_writing_original_protocol2_heldout5_dev42.sh",
+            "run_digit_writing_original_protocol2_composition.sh",
+            "run_digit_writing_original_protocol2_transfer5.sh",
         ):
             wrapper = (ROOT / "server" / name).read_text(encoding="utf-8")
-            self.assertIn("run_digit_original_protocol_experiment.sh", wrapper)
+            self.assertIn(
+                "run_digit_writing_original_protocol2_experiment.sh", wrapper
+            )
 
 
 @unittest.skipUnless(train_module is not None, "MotorNet is server-only")
@@ -144,9 +163,9 @@ class PhaseDOriginalCoreReuseTests(unittest.TestCase):
 
     def test_digit_base_entry_delegates_to_original_subset_trainer(self):
         for filename, expected_digits in (
-            ("digit_original_protocol_full10_dev42.json", tuple(range(10))),
+            ("digit_writing_original_protocol2_full10_dev42.json", tuple(range(10))),
             (
-                "digit_original_protocol_heldout5_dev42.json",
+                "digit_writing_original_protocol2_heldout5_dev42.json",
                 (0, 1, 2, 3, 4, 6, 7, 8, 9),
             ),
         ):
@@ -185,7 +204,7 @@ class PhaseDOriginalCoreReuseTests(unittest.TestCase):
         source = inspect.getsource(train_module.train_subsets_base_model)
         self.assertIn("DEF_HP.copy()", source)
         for loss_name in (
-            "l1_dist",
+            "position_l1_metrics",
             "l1_rate",
             "l1_weight",
             "l1_muscle_act",
@@ -299,11 +318,12 @@ class PhaseDCompositionTests(unittest.TestCase):
             for name, value in policy.state_dict().items()
         }
         coefficients, optimizer = prepare_composition(
-            policy, 5, 8, learning_rate=0.1
+            policy, 0, (4, 6, 9, 8), 8, learning_rate=0.1
         )
-        rule_input = _full_rule(coefficients, 5)
+        rule_input = _full_rule(coefficients, (4, 6, 9, 8))
         self.assertEqual(tuple(rule_input.shape), (8, 10))
-        self.assertTrue(torch.equal(rule_input[:, 5], torch.zeros(8)))
+        self.assertTrue(torch.equal(rule_input[:, 0], torch.zeros(8)))
+        self.assertEqual(int(torch.count_nonzero(rule_input[:, 1:4])), 0)
         self.assertEqual(
             sum(parameter.requires_grad for parameter in policy.parameters()), 0
         )
@@ -316,7 +336,7 @@ class PhaseDCompositionTests(unittest.TestCase):
 
     def test_cpu_closed_loop_gradient_smoke_uses_original_five_term_loss(self):
         config = PhaseDConfigurationTests.load(
-            "digit_original_protocol_full10_dev42.json"
+            "digit_writing_original_protocol2_full10_dev42.json"
         )
         torch.manual_seed(21)
         policy = make_policy()
@@ -329,8 +349,8 @@ class PhaseDCompositionTests(unittest.TestCase):
         x = torch.zeros((2, 8))
         h = torch.zeros_like(x)
         observation, info = environment.reset(options={"batch_size": 2})
-        xy = [info["states"]["fingertip"][:, None, :]]
-        target = [info["goal"][:, None, :]]
+        xy = []
+        target = []
         muscle = [info["states"]["muscle"][:, 0].unsqueeze(1)]
         hidden = [h.unsqueeze(1)]
         terminated = False
@@ -350,7 +370,9 @@ class PhaseDCompositionTests(unittest.TestCase):
         target = torch.cat(target, dim=1)
         muscle = torch.cat(muscle, dim=1)
         hidden = torch.cat(hidden, dim=1)
-        loss = l1_dist(xy, target)
+        loss = position_l1_metrics(
+            xy, target, environment.epoch_bounds
+        )["phase_normalized_position_l1"]
         loss = loss + l1_rate(hidden, 0.001)
         loss = loss + l1_weight(policy, 0.001)
         loss = loss + l1_muscle_act(muscle, 0.01)

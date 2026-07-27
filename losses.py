@@ -1,5 +1,11 @@
 import torch
 
+from digit_writing.phase_normalized_loss import (
+    detached_position_metrics,
+    phase_normalized_l1,
+    position_l1_metrics,
+)
+
 def l1_dist(x, y):
     """L1 loss"""
     return torch.mean(torch.sum(torch.abs(x - y), dim=-1))
