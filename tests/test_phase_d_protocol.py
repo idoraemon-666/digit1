@@ -144,6 +144,12 @@ class PhaseDConfigurationTests(unittest.TestCase):
             self.assertIn(
                 "run_digit_writing_original_protocol2_experiment.sh", wrapper
             )
+            self.assertIn('BASH_SOURCE[0]', wrapper)
+            self.assertIn(
+                '"$SCRIPT_DIR/run_digit_writing_original_protocol2_experiment.sh"',
+                wrapper,
+            )
+            self.assertNotIn("exec bash server/", wrapper)
 
 
 @unittest.skipUnless(train_module is not None, "MotorNet is server-only")
