@@ -1,134 +1,137 @@
 # Next-session handoff
 
-This is the entry point for the native-history original-protocol digit-writing
-rebuild.
+## 1. 接手顺序与权威边界
 
-## Repository identity
+工作目录：`D:\digit_writing_original_protocol`
 
-- Working directory: `D:\digit_writing_original_protocol`.
-- Working branch: `codex/original-protocol-rebuild`.
-- Original-repository baseline:
-  `105cd0c6b153f0e80a2593e43b7ffec7cc1f5e33`.
-- Initial project commit `2c2fe1e021ab37c75db71ca8a8adce2d4b3618b0`
-  is directly based on that baseline.
-- Active `mRNNTorch` gitlink:
-  `ac0c4f589eae37bbde63968912925de99232e306`.
-- Immutable source checkout:
-  `D:\digit_writing_project\reference\original_repo`.
-- Historical digit-project archive:
-  `D:\digit_writing_project`.
+新任务开始后依次完整阅读：
 
-The active branch descends directly from the original paper repository. It
-does not inherit the previous digit-writing implementation history.
+1. `AGENTS.md`；
+2. 本文件；
+3. `PROJECT_PROTOCOL.md`；
+4. 只有涉及 AutoDL 操作时再读 `AUTODL_SERVER_USAGE_GUIDE.md`。
 
-## Reference inputs
+`PROJECT_PROTOCOL.md` 是唯一科学与实施规范。不要从
+`D:\digit_writing_project` 导入代码、配置、checkpoint、测试或实验结果；该目录
+只是历史归档。项目基准设备固定为 AutoDL CPU，CUDA 不属于当前结果谱系。
 
-- `PROJECT_PROTOCOL.md` is the project-local authority adapted for direct
-  modification of the original repository.
-- `AUTODL_SERVER_USAGE_GUIDE.md` is used only for server work.
-- Local `docs/paper.pdf` is the original paper and remains ignored by Git.
+## 2. 固定身份与当前实现
 
-Phase A does not maintain a manual whole-project checksum file. Final delivery
-and actual run archives must generate hashes automatically from the files they
-contain.
+- 本地分支：`codex/original-protocol-rebuild`
+- 原仓库基线：`105cd0c6b153f0e80a2593e43b7ffec7cc1f5e33`
+- 固定 `mRNNTorch`：`ac0c4f589eae37bbde63968912925de99232e306`
+- 当前接受的服务器 HEAD：
+  `b7b9b28189e33010a1ee5da28a0a27b0bd101a59`
+- 服务器仓库：
+  `/root/autodl-tmp/digit_writing_original_protocol_4b8b1db`
+- CPU 环境：`/root/autodl-tmp/conda/envs/motor-compat-cpu`
+- 固定环境：Python 3.10.20、PyTorch 2.6.0+cpu、MotorNet 0.2.0、
+  NumPy 2.2.6、`torch.cuda.is_available() == False`
 
-The user has frozen CPU as the baseline backend. Phase B and all later project
-implementation, tests, audits, and eventual baseline runs are executed on the
-fresh AutoDL instance with the pinned CPU environment. CUDA is not part of the
-baseline result lineage unless a later protocol decision explicitly creates a
-separate experiment.
+本地工作树是由各次已接受服务器结果组合形成的审查工作树，当前非干净状态是
+已知事实。不要执行 `git reset --hard`、`git checkout --`，也不要删除未跟踪的
+项目文件。服务器上的正式运行仓库在运行期间必须保持干净，不要修改任何文件。
 
-## Reading order
+## 3. 已完成工作
 
-1. `AGENTS.md`
-2. `NEXT_SESSION_HANDOFF.md`
-3. `PROJECT_PROTOCOL.md`
-4. `AUTODL_SERVER_USAGE_GUIDE.md` only before server work
+- Phase A：原仓库身份、Git 祖先、训练核心和 submodule 边界已确认。
+- Phase B：数字几何、时间规则、18 张正式轨迹图及工作空间审计已通过。
+- Phase C：28 维输入、trial 时序、采样和 MotorNet CPU 闭环已通过。
+- 无训练协议审计：几何、时间、工作空间和 rollout 全集无阻断项。
+- Phase D v2/v2.1：full10、heldout5、composition、transfer5 四条独立路径已
+  实施；51 项 AutoDL CPU 测试全部通过，0 skipped。
+- Phase E：交付审查已完成，详见 `PHASE_E_DELIVERY_REVIEW.md`；未发现实现
+  阻断项。
 
-The old digit-writing brief, frozen spec, project decisions, seed-42 protocol,
-implementation, tests, and reports are not part of this project.
+关键实现边界：
 
-## Active file boundary
+- full10 和 heldout5 复用原仓库基础训练循环，但模型、optimizer、配置、目录和
+  checkpoint 完全独立；
+- composition 只允许读取 full10 best checkpoint，并冻结网络、只优化外部系数；
+- transfer5 只允许读取 heldout5 best checkpoint，并只训练重新初始化的数字 5
+  rule 输入列；
+- 固定 submodule 的 RNN 调用兼容补丁只修正参数映射，不改变网络、loss 或协议；
+- 每个正式 runner 都要求用户明确授权与其完全一致的 exact run label。
 
-The active tree contains:
+已知但非阻断的科学风险：数字最长/最短 movement steps 比为 `6.318`，大于原任务
+的 `2.0`。当前证据不支持修改几何、速度、loss、时间尺度或网络规模。
 
-- repository control files and the four documents listed above;
-- the original training core: `config.py`, `envs.py`, `losses.py`, `model.py`,
-  `train.py`, and `utils.py`;
-- the pinned `mRNNTorch` submodule;
-- the local original paper;
-- server environment definitions and dependency inputs.
+## 4. 当前正在运行的正式实验
 
-No `digit_writing/`, new-project `configurations/`, `tests/`, training runner,
-or Phase A hash manifest is present yet. These paths are created incrementally
-only when the corresponding implementation phase begins.
+用户只授权了：`full10-dev42`。
 
-The original `analysis/`, `experiments/`, `configurations/`, and `config.txt`
-remain available in Git history at commit `105cd0c...`, but are intentionally
-absent from the active tree. Retrieve individual source files with `git show`
-only when the protocol explicitly requires code-faithful migration. In
-particular, the composition implementation must inspect
-`105cd0c:experiments/exp_utils.py`, and validation/training behavior must stay
-anchored to `105cd0c:train.py`, `envs.py`, `losses.py`, and `model.py`.
-
-## Required first checks
-
-Before editing:
+当前状态是该实验正在 AutoDL CPU 上运行，尚未完成归档。最后一次用户报告为：
 
 ```text
-git status --short --branch
-git rev-parse HEAD
-git submodule status
-git -C mRNNTorch status --short
+验证记录数：128
+最近完成的验证 batch：63500/75000
+当前验证损失：0.01426648113
+历史最佳损失：0.01421837435（batch 62000）
+当前比最佳高：0.338%
+最近 10000 updates 首尾改善：2.558%
+最近 10 次验证均值相对前 10 次：-2.921%
+相对斜率：-0.628% / 1000 updates
 ```
 
-Stop on unexplained changes. Never modify the immutable source checkout.
+判断：训练健康、整体收敛、仍在缓慢改善，尚未完全平台化；62500–63000 的反弹
+已在 63500 基本恢复，没有发散或持续退化证据。必须继续跑满协议规定的 75000
+updates，不提前停止、不调整学习率、不修改代码。
 
-## Completed gate: Phase A rerun
+运行位置：
 
-The prior Phase A completion status was discarded. Phase A was rerun from the
-clean commit `fa86e3ce918fc4c1ae1f6ec9304a3754b515f687` on 2026-07-26 without
-running training:
+```text
+启动日志：/root/autodl-tmp/full10-dev42-launch.log
+训练输出：/root/autodl-tmp/digit_writing_original_protocol_4b8b1db/runs/digit_original_protocol/full10/dev42
+验证损失：上述目录/test_losses.txt
+最佳模型：上述目录/best_checkpoint.pt
+```
 
-1. Git ancestry and the original baseline commit were confirmed;
-2. the six original training-core files remain unchanged;
-3. the mRNNTorch gitlink and immutable external source boundary were confirmed;
-4. full10 and heldout5 must be trained independently, with composition using
-   only full10 and transfer using only heldout5;
-5. no historical digit code, configuration, test, checkpoint, or result was
-   imported.
+`nohup` 日志只出现 preflight 标记而暂时没有 batch 行，是 Python 通过管道输出时的
+缓冲现象，不能据此认定卡住。进度以 Python 进程、`test_losses.txt`、checkpoint
+及其更新时间共同判断。
 
-The original training core and `mRNNTorch` were not modified. No checkpoint was
-loaded and no training or MotorNet closed-loop run was started. Phase A added
-no runtime code, configuration schema, test suite, runner, or manually
-maintained checksum manifest. The CPU backend decision is an explicit user
-decision recorded for subsequent server phases, not a Phase A runtime action.
+## 5. 下一步工作
 
-## Immediate next step
+### 5.1 先完成并验收 `full10-dev42`
 
-After creating and verifying an auditable upload package, start Phase B of
-`PROJECT_PROTOCOL.md` on the fresh AutoDL CPU server only:
+1. 等待进程自然完成，不重复启动同一 label。
+2. 收集 runner 最终标记：`PARENT_HEAD`、`RUN_ROOT`、`ARCHIVE`、
+   `RUN_EXIT=0`、`TEE_EXIT=0`、`FORMAL_RUN_COMPLETE=1`。
+3. 核对预期归档及校验文件：
 
-1. implement the canonical primitives and digits 0-9 from sections 5 and 6;
-2. implement linear arc-length timing with one join sample and C0 continuity;
-3. create the single geometry/time configuration actually consumed by the
-   implementation and add the required geometry and timing tests;
-4. generate the prescribed-direction figures and eight direction-specific
-   `2-by-5` audit figures, with each digit appearing once per figure;
-5. complete the geometry, timing, and MotorNet workspace audits;
-6. do not start Phase C until every Phase B gate passes.
+```text
+/root/autodl-tmp/digit-writing-full10-dev42-b7b9b28-seed42.tar.gz
+/root/autodl-tmp/digit-writing-full10-dev42-b7b9b28-seed42.tar.gz.sha256
+```
 
-Continue through Phases B-D only after each preceding gate is verified. Stop
-at Phase E for user review before any expensive training.
+4. 用户下载归档后，由助手在本地独立核对外层 SHA-256、包内
+   `SHA256SUMS`、Git/submodule HEAD、CPU 环境、退出码、配置、日志、best/final
+   checkpoint 和实际执行范围。
+5. 只有上述验收全部通过，才把 full10 标记为正式完成并更新项目文档。
 
-## Hard stop lines
+如果新任务开始时训练仍在运行，先让用户返回以下只读信息：Python 进程、
+`test_losses.txt` 行数与末尾、`best_checkpoint.pt` 时间。不要修改服务器仓库。
 
-- Do not start seed-42 training, 75,000-update training, or formal seeds.
-- Do not load any checkpoint or optimizer state from the historical digit
-  project.
-- Do not modify the immutable original-repository checkout.
-- Do not add reverse stroke direction or minimum-jerk primitives.
-- Do not create a preset rule-vector algebra formula.
-- Do not combine the full-10 and held-out-5 base models.
-- Do not change geometry, global scale, speed mapping, losses, or network size
-  without an explicit protocol decision.
+### 5.2 后续实验仍需逐项明确授权
+
+当前授权表：
+
+| Exact run label | 状态 | 依赖 |
+|---|---|---|
+| `full10-dev42` | 已授权，正在运行 | 无 |
+| `heldout5-dev42` | 未授权 | 无；必须新建独立九数字模型 |
+| `composition-dev42` | 未授权 | full10 best checkpoint 已验收 |
+| `transfer5-dev42` | 未授权 | heldout5 best checkpoint 已验收 |
+
+`full10-dev42` 的授权不自动延伸到其他三个 label。完成 full10 验收后，下一项应由
+用户再次明确指定 exact run label；在两套基础模型都完成前，不进入最终组合与迁移
+结果阶段。
+
+## 6. 硬停止线
+
+- 不修改冻结的数字几何、全局缩放、速度、loss、网络规模或 75000-update 协议。
+- 不导入历史数字项目的代码、配置、checkpoint 或结果。
+- 不混用 full10 与 heldout5 checkpoint。
+- 不预设数字 rule 的代数组合关系。
+- 不根据单次 seed 或短期 loss 波动反向修改协议。
+- 不运行未被用户逐字授权的 exact run label。

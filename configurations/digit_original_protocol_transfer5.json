@@ -1,0 +1,24 @@
+{
+  "protocol": "digit_original_protocol",
+  "run_kind": "transfer5",
+  "seed": 42,
+  "device": "cpu",
+  "geometry_config": "configurations/digit_original_protocol_geometry.json",
+  "source_checkpoint": "runs/digit_original_protocol/heldout5/dev42/best_checkpoint.pt",
+  "target_digit": 5,
+  "optimizer": {
+    "name": "Adam",
+    "learning_rate": 0.001,
+    "grad_clip_norm": 1.0
+  },
+  "training": {
+    "batch_size": 32,
+    "max_updates": 75000,
+    "validation_interval": 500
+  },
+  "output": {
+    "directory": "runs/digit_original_protocol/transfer5/dev42",
+    "best_checkpoint": "best_checkpoint.pt",
+    "final_checkpoint": "final_continuation_checkpoint.pt"
+  }
+}

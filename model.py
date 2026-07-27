@@ -93,15 +93,58 @@ class RNNPolicy(nn.Module):
 
         self.to(device)
 
+        self._rule_transfer_hook = None
+        self._rule_transfer_index = None
+
     def forward(self, obs, x, h, *args, noise=True):
         # Forward pass through mRNN
-        x, h = self.mrnn(obs[:, None, :], x, h, *args, noise=noise)
+        x, h = self.mrnn(x, obs[:, None, :], *args, noise=noise, h0=h)
         # Squeeze in the time dimension (doing timesteps one by one)
         h = h.squeeze(1)
         x = x.squeeze(1)
         # Motor output
         u = self.sigmoid(self.fc(h)).squeeze(dim=1)
         return x, h, u
+
+    def rule_input_weight(self):
+        """Return the original 28-column input matrix used by the RNN."""
+        return self.mrnn.inp_dict["input"].connections["region"]["parameter"]
+
+    def prepare_rule_column_transfer(self, rule_index=5, generator=None):
+        """Freeze the policy and expose only one reinitialized rule column."""
+        if not 0 <= rule_index < 10:
+            raise ValueError("rule_index must identify one of the ten rule inputs")
+        if "input" not in self.mrnn.inp_dict:
+            raise RuntimeError("column transfer requires the original input region")
+
+        if self._rule_transfer_hook is not None:
+            self._rule_transfer_hook.remove()
+            self._rule_transfer_hook = None
+
+        for parameter in self.parameters():
+            parameter.requires_grad_(False)
+
+        input_weight = self.rule_input_weight()
+        input_weight.requires_grad_(True)
+        with torch.no_grad():
+            torch.nn.init.xavier_normal_(
+                input_weight[:, rule_index : rule_index + 1],
+                generator=generator,
+            )
+
+        gradient_mask = torch.zeros_like(input_weight)
+        gradient_mask[:, rule_index] = 1.0
+        self._rule_transfer_hook = input_weight.register_hook(
+            lambda gradient: gradient * gradient_mask
+        )
+        self._rule_transfer_index = rule_index
+        return input_weight
+
+    def transfer_trainable_parameters(self):
+        """Return the sole parameter admitted by column-level rule transfer."""
+        if self._rule_transfer_index is None:
+            raise RuntimeError("prepare_rule_column_transfer must be called first")
+        return (self.rule_input_weight(),)
 
 
 

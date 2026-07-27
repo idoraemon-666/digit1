@@ -1,0 +1,21 @@
+{
+  "geometry": {
+    "a": 0.035,
+    "b": 0.02625,
+    "H": 0.035,
+    "V": 0.06125,
+    "D_dx": 0.02625,
+    "D_dy": 0.0525,
+    "global_scale": 0.8791208791208792,
+    "arc_table_intervals": 65536
+  },
+  "timing": {
+    "dt_seconds": 0.01,
+    "stable_steps": 25,
+    "delay_steps": [25, 50, 75],
+    "hold_steps": 25,
+    "reach_distance_m": 0.25,
+    "training_reference_steps": [50, 100, 150],
+    "validation_reference_steps": [50, 60, 70, 80, 90, 100, 110, 120, 130, 140]
+  }
+}
