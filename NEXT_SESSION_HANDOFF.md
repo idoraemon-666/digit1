@@ -20,6 +20,7 @@
 
 - 本地分支：`codex/digit-writing-original-protocol2`
 - 项目 2 实现提交：`a18b172`
+- 审计证据加固提交：`3d5be78`
 - 原仓库基线：`105cd0c6b153f0e80a2593e43b7ffec7cc1f5e33`
 - 固定 `mRNNTorch`：`ac0c4f589eae37bbde63968912925de99232e306`
 - 服务器仓库：`/root/autodl-tmp/digit_writing_original_protocol_4b8b1db`
