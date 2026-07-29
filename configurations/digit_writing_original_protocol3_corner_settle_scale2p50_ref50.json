@@ -1,0 +1,63 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_corner_settle_gate",
+  "variant": "corner_settle_fast_review6000",
+  "source_gate2_config": "configurations/digit_writing_original_protocol3_gate2_scale2p50_ref50.json",
+  "seed": 42,
+  "validation_seed": 1042,
+  "device": "cpu",
+  "geometry_config": "configurations/digit_writing_original_protocol3_geometry_scale2p50_ref50.json",
+  "scale_multiplier": 2.5,
+  "timing_mode": "fixed_segment_timing",
+  "selected_reference_steps": 50,
+  "condition_schedule": "protocol3_corner_settle_matrix_v1",
+  "corner_settle": {
+    "turn_angle_deg": 60.0,
+    "physical_pause_ms": 100,
+    "settle_intervals": 10,
+    "review_interval_updates": 6000,
+    "automatic_convergence_decision": false,
+    "automatic_continuation": false,
+    "automatic_medium_fallback": false
+  },
+  "cases": [
+    {"label": "digit4_baseline", "digit": 4, "condition": "baseline", "direction_index": 0, "delay_steps": 50, "settle_intervals": 0, "output_subdirectory": "digit4/baseline"},
+    {"label": "digit4_settle100ms", "digit": 4, "condition": "settle100ms", "direction_index": 0, "delay_steps": 50, "settle_intervals": 10, "output_subdirectory": "digit4/settle100ms"},
+    {"label": "digit7_baseline", "digit": 7, "condition": "baseline", "direction_index": 0, "delay_steps": 50, "settle_intervals": 0, "output_subdirectory": "digit7/baseline"},
+    {"label": "digit7_settle100ms", "digit": 7, "condition": "settle100ms", "direction_index": 0, "delay_steps": 50, "settle_intervals": 10, "output_subdirectory": "digit7/settle100ms"}
+  ],
+  "model": {
+    "network": "rnn",
+    "input_size": 28,
+    "hidden_size": 256,
+    "output_size": 6,
+    "activation": "softplus",
+    "recurrent_noise_std": 0.1,
+    "input_noise_std": 0.01,
+    "constrained": false,
+    "rnn_dt_ms": 10,
+    "rnn_tau_ms": 20,
+    "batch_first": true
+  },
+  "optimizer": {"name": "Adam", "learning_rate": 0.001, "grad_clip_norm": 1.0},
+  "training": {"batch_size": 8, "max_updates": 6000, "validation_interval": 100},
+  "position_loss": {
+    "type": "phase_normalized_l1",
+    "stable_weight": 0.1,
+    "delay_weight": 0.1,
+    "movement_weight": 0.6,
+    "hold_weight": 0.2
+  },
+  "regularization": {
+    "l1_rate": 0.001,
+    "l1_weight": 0.001,
+    "l1_muscle_act": 0.01,
+    "simple_dynamics_weight": 0.001
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3_corner_settle_gate/scale2p50/ref50/review6000",
+    "initial_checkpoint": "initial_checkpoint.pt",
+    "best_checkpoint": "best_checkpoint.pt",
+    "final_checkpoint": "final_continuation_checkpoint.pt"
+  }
+}

@@ -142,6 +142,8 @@ def audit_gate2_case(
     case: Mapping[str, Any],
     output: str | Path,
     workspace_audit: Mapping[str, Any],
+    *,
+    audit_filename: str = "gate2_candidate_audit.json",
 ) -> dict[str, Any]:
     """Audit one trained candidate without taking an optimizer step."""
 
@@ -330,6 +332,17 @@ def audit_gate2_case(
         finite and safety_passed and before_hash == after_hash
     )
     _save_overlay(output, movement_actual, movement_target)
+    corner_audit = None
+    if environment.corner_records is not None:
+        from digit_writing.corner_settle import save_corner_audit_artifacts
+
+        corner_audit = save_corner_audit_artifacts(
+            output,
+            movement_actual,
+            movement_target,
+            environment.corner_records,
+            environment.geometry_config.dt_seconds,
+        )
     result = {
         "case": dict(case),
         "optimizer_steps_during_audit": 0,
@@ -347,8 +360,9 @@ def audit_gate2_case(
         "safety_passed": safety_passed,
         "engineering_passed": engineering_passed,
         "behavior_passed": behavior_passed,
+        "corner_audit": corner_audit,
         "qualitative_overlay_review_required": True,
         "automatic_gate2_pass": bool(engineering_passed and behavior_passed),
     }
-    _write_json(output / "gate2_candidate_audit.json", result)
+    _write_json(output / audit_filename, result)
     return result

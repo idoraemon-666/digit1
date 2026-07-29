@@ -11,6 +11,7 @@ import numpy as np
 import torch as th
 from motornet import environment as env
 
+from digit_writing.corner_settle import build_corner_settle_trajectory
 from digit_writing.geometry import (
     build_digit_trajectory,
     load_geometry_config,
@@ -35,10 +36,13 @@ class DigitWritingEnv(env.Environment):
         self,
         *args: Any,
         geometry_config_path: str | Path = DEFAULT_GEOMETRY_CONFIG,
+        corner_settle_intervals: int | None = None,
         **kwargs: Any,
     ) -> None:
         self.geometry_config_path = Path(geometry_config_path)
         self.geometry_config = load_geometry_config(self.geometry_config_path)
+        self.corner_settle_intervals = corner_settle_intervals
+        self.corner_records = None
         super().__init__(*args, **kwargs)
         if self.action_frame_stacking != 0:
             raise ValueError("digit environments require action_frame_stacking=0")
@@ -154,15 +158,28 @@ class DigitWritingEnv(env.Environment):
         angles = validation_angles() if testing else training_angles()
         angle_values = angles[self.direction_indices]
         trajectories = []
+        self.corner_records = None
         fingertip_numpy = fingertip.detach().cpu().numpy()
         for batch_index, angle in enumerate(angle_values):
-            trajectory = build_digit_trajectory(
-                self.current_digit,
-                self.geometry_config,
-                self.reference_steps,
-                spatial_angle_rad=float(angle),
-                anchor=fingertip_numpy[batch_index],
-            )
+            if self.corner_settle_intervals is None:
+                trajectory = build_digit_trajectory(
+                    self.current_digit,
+                    self.geometry_config,
+                    self.reference_steps,
+                    spatial_angle_rad=float(angle),
+                    anchor=fingertip_numpy[batch_index],
+                )
+            else:
+                trajectory = build_corner_settle_trajectory(
+                    self.current_digit,
+                    self.geometry_config,
+                    self.reference_steps,
+                    settle_intervals=self.corner_settle_intervals,
+                    spatial_angle_rad=float(angle),
+                    anchor=fingertip_numpy[batch_index],
+                )
+                if self.corner_records is None:
+                    self.corner_records = trajectory.corners
             trajectories.append(trajectory.points)
 
         trajectory_points = np.stack(trajectories)

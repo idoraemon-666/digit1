@@ -372,9 +372,12 @@ def _do_protocol3_eval(
 ):
     if env_dict is None:
         raise ValueError("protocol3 evaluation requires an explicit digit set")
-    gate2 = hp.get("condition_schedule") == "protocol3_gate2_single_condition"
-    deterministic = gate2 or bool(hp.get("deterministic_evaluation", False))
-    if gate2:
+    single_condition = hp.get("condition_schedule") in {
+        "protocol3_gate2_single_condition",
+        "protocol3_corner_settle_single_condition",
+    }
+    deterministic = single_condition or bool(hp.get("deterministic_evaluation", False))
+    if single_condition:
         cases = (
             (
                 next(iter(env_dict.values())),
@@ -442,7 +445,10 @@ def _protocol3_training_condition(env_list, hp):
         )
         environment_class = env_list[digit_index]
         directions = _balanced_protocol3_directions(hp["batch_size"])
-    elif schedule == "protocol3_gate2_single_condition":
+    elif schedule in {
+        "protocol3_gate2_single_condition",
+        "protocol3_corner_settle_single_condition",
+    }:
         environment_class = env_list[0]
         delay_index = hp["gate2_delay_index"]
         environment_seed = random.randrange(2**32)
@@ -969,9 +975,12 @@ def train_subsets_base_model(
 
     probs = [1/len(env_list)] * len(env_list)
 
-    gate2 = (
-        hp.get("condition_schedule") == "protocol3_gate2_single_condition"
-    )
+    schedule = hp.get("condition_schedule")
+    gate2 = schedule == "protocol3_gate2_single_condition"
+    single_condition = schedule in {
+        "protocol3_gate2_single_condition",
+        "protocol3_corner_settle_single_condition",
+    }
     if resume_checkpoint is not None:
         if not protocol3:
             raise ValueError("only protocol3 supports continuation resume")
@@ -986,10 +995,10 @@ def train_subsets_base_model(
             checkpoint,
             hp["protocol_config"],
         )
-        if gate2:
+        if single_condition:
             source_identity = checkpoint["git_identity"]
             if expected_resume_repository_head is None:
-                raise ValueError("Gate 2 continuation requires its expected source HEAD")
+                raise ValueError("single-condition continuation requires its expected source HEAD")
             if (
                 source_identity["repository_head"]
                 != expected_resume_repository_head
@@ -1002,7 +1011,7 @@ def train_subsets_base_model(
             ):
                 if source_identity[key] != hp["git_identity"][key]:
                     raise ValueError(
-                        f"Gate 2 continuation source {key} does not match"
+                        f"single-condition continuation source {key} does not match"
                     )
             if checkpoint.get("variant") != hp.get("variant"):
                 raise ValueError("Gate 2 continuation case identity does not match")
@@ -1017,25 +1026,20 @@ def train_subsets_base_model(
                 "gate2_delay_index",
                 "batch_size",
                 "save_iter",
+                "env_kwargs",
             ):
                 if source_hp.get(key) != hp.get(key):
                     raise ValueError(
-                        f"Gate 2 continuation source {key} does not match"
+                        f"single-condition continuation source {key} does not match"
                     )
             if "gate2_consecutive_passes" not in restore_state:
-                raise ValueError(
-                    "Gate 2 continuation state is missing consecutive passes"
-                )
+                raise ValueError("single-condition continuation state is incomplete")
             source_updates = int(restore_state["completed_updates"])
             if source_updates < int(hp["epochs"]):
-                raise ValueError(
-                    "Gate 2 continuation requires a completed initial run"
-                )
+                raise ValueError("continuation requires a completed initial run")
             if source_updates % int(hp["save_iter"]) != 0:
-                raise ValueError(
-                    "Gate 2 continuation source must end on a validation boundary"
-                )
-            if int(restore_state["gate2_consecutive_passes"]) >= 2:
+                raise ValueError("continuation source must end on a validation boundary")
+            if gate2 and int(restore_state["gate2_consecutive_passes"]) >= 2:
                 raise ValueError("a passed Gate 2 case must not be continued")
         else:
             if expected_resume_repository_head is not None:
@@ -1072,19 +1076,19 @@ def train_subsets_base_model(
         else hp.get("stop_after_updates", hp["epochs"])
     )
     if stop_after_updates > int(hp["epochs"]):
-        gate2_extension = bool(
+        single_condition_extension = bool(
             protocol3
-            and gate2
+            and single_condition
             and resume_checkpoint is not None
             and manual_resume_authorized
             and expected_resume_repository_head is not None
         )
-        if not gate2_extension:
+        if not single_condition_extension:
             raise ValueError("target completed updates exceed the frozen maximum")
     if stop_after_updates <= completed_updates:
         raise ValueError("target completed updates must exceed the checkpoint state")
-    if gate2 and stop_after_updates % int(hp["save_iter"]) != 0:
-        raise ValueError("Gate 2 target must end on a validation boundary")
+    if single_condition and stop_after_updates % int(hp["save_iter"]) != 0:
+        raise ValueError("single-condition target must end on a validation boundary")
 
     def protocol3_training_state():
         return {
@@ -1110,7 +1114,7 @@ def train_subsets_base_model(
             policy,
             hp,
             env_dict,
-            network_noise=not gate2,
+            network_noise=not single_condition,
             return_metrics=True,
         )
         if not all(np.isfinite(value) for value in validation_metrics.values()):
@@ -1135,7 +1139,7 @@ def train_subsets_base_model(
                 **condition_counts,
             },
         )
-        if not gate2:
+        if not single_condition:
             sentinel_hp = dict(hp)
             sentinel_hp["deterministic_evaluation"] = True
             sentinel_metrics = _run_validation(
@@ -1287,7 +1291,7 @@ def train_subsets_base_model(
             mean_loss = sum(losses[-interval:]) / interval
             progress_target = (
                 stop_after_updates
-                if gate2 and resume_checkpoint is not None
+                if single_condition and resume_checkpoint is not None
                 else hp["epochs"]
             )
             print(
