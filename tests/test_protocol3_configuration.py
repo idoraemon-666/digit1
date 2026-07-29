@@ -56,6 +56,19 @@ class Protocol3ConfigurationTests(unittest.TestCase):
         self.assertIn('[[ "$REFERENCE" == "50" ]] && exit 20', gate2)
         self.assertIn('exit 21', gate2)
 
+    def test_gate2_continuation_requires_manual_isolated_resume(self):
+        runner = (
+            ROOT
+            / "server"
+            / "run_digit_writing_original_protocol3_gate2_continuation.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('MANUAL_RESUME_AUTHORIZED:-}', runner)
+        self.assertIn("--manual-resume-authorized", runner)
+        self.assertIn("gate2_continuations", runner)
+        self.assertIn("AUTOMATIC_CONTINUATION_STARTED=0", runner)
+        self.assertIn("AUTOMATIC_MEDIUM_FALLBACK_STARTED=0", runner)
+        self.assertIn("exit 22", runner)
+
     def test_protocol_loader_names_protocol3_explicitly(self):
         source = (ROOT / "config.py").read_text(encoding="utf-8")
         self.assertIn('"digit_writing_original_protocol3"', source)

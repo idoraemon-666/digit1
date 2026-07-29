@@ -700,9 +700,12 @@ path completion ratio
 1. 先执行 Gate 1；
 2. Gate 1 通过后可直接执行 Gate 2，无需再次请示；
 3. Gate 2 先验证 fast；
-4. fast 未通过，并且已经排除代码、数据流和安全问题时，只允许整体回退一次到
-   medium；
-5. medium 仍失败则停止并报告，不再扫描其他速度或修改协议。
+4. 任一案例到达 3,000 updates 尚未通过时，先强制检查完整学习曲线；
+5. 若工程、数据流和安全正常且用户认为仍未充分训练，可从同一完整 continuation
+   checkpoint 续跑该失败案例；每次目标 update 均须重新人工批准；
+6. 不采用无依据的 6,000-update 充分训练假设，不允许自动连续续跑；
+7. fast 经检查/获准续跑后仍判定失败时，只允许整体回退一次到 medium；
+8. medium 适用同一受控续跑规则；最终仍失败则停止，不再扫描其他速度或修改协议。
 
 服务器仍由用户执行逐条短命令，助手不得直接连接或接管服务器。
 
@@ -958,4 +961,24 @@ estimated_archive_size
 - 每个 update 从已保存训练 RNG 派生 MotorNet 环境 seed；
 - update 5,000 强制暂停、只读同网格审计和显式人工授权 resume。
 
-当前没有创建正式 full10 配置，也没有冻结最终工程阈值。Gate 1、Gate 2 和任何正式训练均尚未在服务器启动。
+当前没有创建正式 full10 配置，也没有冻结最终工程阈值。根据用户提供的服务器
+输出，Gate 1 已在 2.5× 尺度通过，54 项测试全部通过且无需尺度回退；Gate 2 fast
+正在服务器运行。正式 full10 尚未启动。
+
+---
+
+# 8. 2026-07-29 Gate 2 受控续跑补充决定
+
+用户已明确指出 3,000 updates 不能被预设为充分训练证据，并授权实现 Gate 2
+continuation。固定边界为：
+
+- 初始 Gate 2 仍在 3,000 updates 保存完整 continuation checkpoint；
+- 只有工程/安全通过的 `behavior_failure` 单案例有续跑资格；
+- 每次续跑前先只读检查 source summary、archive、checkpoint、Git/config/case 身份和
+  完整学习曲线；
+- 用户为每次续跑明确指定新的目标 update；不得自动推断目标或固定为 6,000；
+- 续跑真实恢复 model、optimizer、全部 RNG、累计计数、验证历史和连续通过计数；
+- 每段结束再次暂停；不自动续下一段，不自动回退 medium；
+- 续跑结果独立归档，不覆盖原始 Gate 2 目录；
+- 当前服务器正在运行的 Gate 2 不得被本地开发干扰，新的 continuation 代码只能在
+  当前服务器任务完全结束后再部署。

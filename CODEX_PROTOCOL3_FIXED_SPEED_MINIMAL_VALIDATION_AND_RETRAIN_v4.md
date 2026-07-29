@@ -10,7 +10,7 @@
 4. 同一严格共享片段在所有数字中使用相同空间模板、相同采样顺序和相同步数；
 5. 训练保留 8 个空间方向，正式验证保留 32 个方向，并取消多时间条件联合训练；
 6. 每个 update 独立等概率抽取数字，并独立随机抽取 delay；
-7. 先验证 fast 固定片段时间条件；若 fast 行为未通过且已排除工程、数据流和安全问题，只允许整体回退一次到 medium；
+7. 先验证 fast 固定片段时间条件；3,000 updates 尚未通过时先检查并按次人工授权续跑；fast 最终仍未通过且已排除工程、数据流和安全问题时，只允许整体回退一次到 medium；
 8. Gate 2 后先冻结最终工程验收阈值，再从零启动 full10；训练必须在 5,000 updates 强制暂停并等待用户人工批准。
 
 核心目标：
@@ -758,7 +758,7 @@ canonical_sample_sha256
 - 训练保留网络噪声；
 - deterministic evaluation 关闭网络和环境噪声；
 - 每 100 updates 评估；
-- 最多 3,000 updates；
+- 首段最多 3,000 updates，并在该边界保存完整 continuation checkpoint；
 - 连续两次通过后可提前停止。
 
 ## 11.2 第一轮：fast
@@ -777,9 +777,48 @@ selected_reference_steps = 50
 
 不再运行 medium 过拟合。
 
-## 11.3 第二轮：medium 回退
+若任一案例在 3,000 updates 时尚未通过，不得只凭 update 数直接认定 fast 不可行，
+也不得自动启动 medium。必须先完成第 11.3 节的只读检查和人工判断。
 
-若 fast 任一模型失败，并且失败不是工程 bug 或安全问题，则：
+## 11.3 3,000 updates 后的受控续跑
+
+3,000 updates 不是“充分训练”的预设上限。只有同时满足以下条件，案例才有资格
+申请续跑：
+
+- source summary 明确分类为 `behavior_failure`；
+- 工程、数据流和安全检查全部通过；
+- 尚未连续两次达到行为标准；
+- source checkpoint、source summary 和 source archive 的 SHA/Git/config/case
+  身份全部一致；
+- checkpoint 包含完整 model、optimizer、Python/NumPy/Torch RNG、条件计数、
+  validation history 和连续通过计数；
+- 用户检查完整学习曲线后，为本次续跑明确批准新的
+  `target_completed_updates`。
+
+续跑固定规则：
+
+1. 只续跑未通过的单案例，不重新训练已经通过的案例；
+2. 从同一 `final_continuation_checkpoint.pt` 恢复，不得改用 best checkpoint；
+3. 恢复 model、optimizer、全部 RNG、累计 updates、条件计数、验证历史和连续通过
+   计数；
+4. 新目标必须严格大于 source updates，并落在 100-update 验证边界；
+5. 每次只运行到本次人工批准的目标或提前连续两次通过；
+6. 续跑结果写入独立 `gate2_continuations` 目录，不追加、覆盖或修改 source 结果；
+7. 每次续跑结束后再次强制暂停，不得自动继续下一段，也不得自动启动 medium；
+8. 不预设 6,000 或其他无直接依据的“充分训练”硬上限。是否再续跑必须结合
+   normalized error、endpoint error、path ratio、loss/gradient 关系和平台趋势重新
+   人工决定。
+
+只读检查必须同时报告首值、末值、最近 10 个验证点、前一组 10 个验证点及两组均值
+之差；脚本不得把该趋势统计自动转换成“充分训练”或“必须续跑”的结论。
+
+续跑若通过，仍须执行最终 candidate audit 和轨迹图人工审查。梯度指标继续只作
+诊断，不得单独触发续跑、失败或 medium 回退。
+
+## 11.4 第二轮：medium 回退
+
+若 fast 任一模型在获准的检查/续跑后仍由用户判定为行为失败，并且失败不是工程
+bug、数据流或安全问题，则：
 
 - 将 O1/O2/O3 全部重新从零训练；
 - 统一使用 `selected_reference_steps = 100`；
@@ -800,7 +839,10 @@ Gate 2 = FAIL
 
 不得再修改片段时长或回退到 slow。
 
-## 11.4 必须计算的指标
+medium 的 3,000-update 边界同样适用第 11.3 节；medium 续跑仍须逐次人工批准，
+不得自动执行。medium 最终仍失败后必须停止，不得扫描第三种速度。
+
+## 11.5 必须计算的指标
 
 movement 阶段：
 
@@ -851,7 +893,7 @@ target bounding-box diagonal
 
 梯度分解只在最终候选 checkpoint 上执行一次，0 optimizer steps；审计前后模型 SHA-256 必须一致。
 
-## 11.5 Gate 2 通过条件
+## 11.6 Gate 2 通过条件
 
 O1/O2/O3 均满足：
 
@@ -1082,15 +1124,16 @@ network/environment noise = false
 11. 运行 Gate 1
 12. 运行 fast Gate 2
 13. fast 全通过则冻结 fast
-14. fast 未通过且无工程 bug，则运行 medium Gate 2
-15. medium 全通过则冻结 medium；否则停止
-16. 结合 Gate 2 可达到水平和旧 protocol2 无量纲指标，一次性冻结最终工程 PASS/FAIL 阈值
-17. 输出 preflight 报告和唯一正式启动命令
-18. 等待用户明确启动指令
-19. 正式 full10 只运行到 update 5,000 并强制暂停
-20. 完成只读审计并等待用户人工批准
-21. 获得人工批准后才从同一 continuation checkpoint 续训至 75,000
-22. 按训练前冻结的阈值完成最终行为和安全验收
+14. fast 到达 3,000 尚未通过时先检查；仍在改善且用户批准时，从完整 checkpoint 续跑失败案例并再次暂停
+15. fast 最终未通过且无工程、数据流或安全问题，则运行 medium Gate 2
+16. medium 适用同一人工分段续跑边界；全通过则冻结 medium，否则停止
+17. 结合 Gate 2 可达到水平和旧 protocol2 无量纲指标，一次性冻结最终工程 PASS/FAIL 阈值
+18. 输出 preflight 报告和唯一正式启动命令
+19. 等待用户明确启动指令
+20. 正式 full10 只运行到 update 5,000 并强制暂停
+21. 完成只读审计并等待用户人工批准
+22. 获得人工批准后才从同一 continuation checkpoint 续训至 75,000
+23. 按训练前冻结的阈值完成最终行为和安全验收
 ```
 
 ---

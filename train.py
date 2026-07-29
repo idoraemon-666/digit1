@@ -910,6 +910,7 @@ def train_subsets_base_model(
     resume_checkpoint=None,
     target_completed_updates=None,
     manual_resume_authorized=False,
+    expected_resume_repository_head=None,
 ):
 
     # create model path for saving model and hp
@@ -972,8 +973,8 @@ def train_subsets_base_model(
         hp.get("condition_schedule") == "protocol3_gate2_single_condition"
     )
     if resume_checkpoint is not None:
-        if not protocol3 or gate2:
-            raise ValueError("only protocol3 full10 supports continuation resume")
+        if not protocol3:
+            raise ValueError("only protocol3 supports continuation resume")
         if not manual_resume_authorized:
             raise PermissionError("protocol3 resume requires explicit manual approval")
         checkpoint = torch.load(
@@ -985,10 +986,66 @@ def train_subsets_base_model(
             checkpoint,
             hp["protocol_config"],
         )
-        if checkpoint["git_identity"] != hp["git_identity"]:
-            raise ValueError("continuation checkpoint Git identity does not match")
-        if int(restore_state["completed_updates"]) != 5_000:
-            raise ValueError("protocol3 continuation must start at update 5000")
+        if gate2:
+            source_identity = checkpoint["git_identity"]
+            if expected_resume_repository_head is None:
+                raise ValueError("Gate 2 continuation requires its expected source HEAD")
+            if (
+                source_identity["repository_head"]
+                != expected_resume_repository_head
+            ):
+                raise ValueError("Gate 2 continuation source HEAD does not match")
+            for key in (
+                "branch",
+                "mrnntorch_recorded_head",
+                "mrnntorch_worktree_head",
+            ):
+                if source_identity[key] != hp["git_identity"][key]:
+                    raise ValueError(
+                        f"Gate 2 continuation source {key} does not match"
+                    )
+            if checkpoint.get("variant") != hp.get("variant"):
+                raise ValueError("Gate 2 continuation case identity does not match")
+            source_hp = checkpoint.get("hp", {})
+            if source_hp.get("git_identity") != source_identity:
+                raise ValueError(
+                    "Gate 2 continuation checkpoint Git identities differ"
+                )
+            for key in (
+                "condition_schedule",
+                "gate2_direction_index",
+                "gate2_delay_index",
+                "batch_size",
+                "save_iter",
+            ):
+                if source_hp.get(key) != hp.get(key):
+                    raise ValueError(
+                        f"Gate 2 continuation source {key} does not match"
+                    )
+            if "gate2_consecutive_passes" not in restore_state:
+                raise ValueError(
+                    "Gate 2 continuation state is missing consecutive passes"
+                )
+            source_updates = int(restore_state["completed_updates"])
+            if source_updates < int(hp["epochs"]):
+                raise ValueError(
+                    "Gate 2 continuation requires a completed initial run"
+                )
+            if source_updates % int(hp["save_iter"]) != 0:
+                raise ValueError(
+                    "Gate 2 continuation source must end on a validation boundary"
+                )
+            if int(restore_state["gate2_consecutive_passes"]) >= 2:
+                raise ValueError("a passed Gate 2 case must not be continued")
+        else:
+            if expected_resume_repository_head is not None:
+                raise ValueError(
+                    "full10 continuation does not accept a different source HEAD"
+                )
+            if checkpoint["git_identity"] != hp["git_identity"]:
+                raise ValueError("continuation checkpoint Git identity does not match")
+            if int(restore_state["completed_updates"]) != 5_000:
+                raise ValueError("protocol3 continuation must start at update 5000")
         policy.load_state_dict(checkpoint["agent_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         completed_updates = int(restore_state["completed_updates"])
@@ -1015,9 +1072,19 @@ def train_subsets_base_model(
         else hp.get("stop_after_updates", hp["epochs"])
     )
     if stop_after_updates > int(hp["epochs"]):
-        raise ValueError("target completed updates exceed the frozen maximum")
+        gate2_extension = bool(
+            protocol3
+            and gate2
+            and resume_checkpoint is not None
+            and manual_resume_authorized
+            and expected_resume_repository_head is not None
+        )
+        if not gate2_extension:
+            raise ValueError("target completed updates exceed the frozen maximum")
     if stop_after_updates <= completed_updates:
         raise ValueError("target completed updates must exceed the checkpoint state")
+    if gate2 and stop_after_updates % int(hp["save_iter"]) != 0:
+        raise ValueError("Gate 2 target must end on a validation boundary")
 
     def protocol3_training_state():
         return {
@@ -1218,7 +1285,16 @@ def train_subsets_base_model(
         )
         if log_training_metrics:
             mean_loss = sum(losses[-interval:]) / interval
-            print("Batch {}/{} Done, mean policy loss: {}".format(batch, hp["epochs"], mean_loss))
+            progress_target = (
+                stop_after_updates
+                if gate2 and resume_checkpoint is not None
+                else hp["epochs"]
+            )
+            print(
+                "Batch {}/{} Done, mean policy loss: {}".format(
+                    batch, progress_target, mean_loss
+                )
+            )
             _append_jsonl(
                 os.path.join(model_path, "training_position_metrics.jsonl"),
                 {
