@@ -25,6 +25,20 @@ from envs import DlyFullReach, DlyFullCircleClk, DlyFullCircleCClk, DlyFigure8, 
 from envs import ComposableEnv
 from utils import save_hp, create_dir, load_hp
 from itertools import product
+from digit_writing.protocol3_schedule import (
+    DELAYS as PROTOCOL3_DELAYS,
+    balanced_direction_indices,
+    new_condition_counts,
+    record_condition,
+    sample_protocol3_update,
+)
+from digit_writing.protocol3_checkpoint import (
+    capture_rng_state,
+    current_git_identity,
+    protocol_config_sha256,
+    restore_rng_state,
+    validate_protocol3_resume_checkpoint,
+)
 
 DEF_HP = {
     "network": "rnn",
@@ -112,8 +126,15 @@ def _append_jsonl(path, value):
         handle.write("\n")
 
 
-def _checkpoint_payload(policy, optimizer, hp, update, validation_loss):
-    return {
+def _checkpoint_payload(
+    policy,
+    optimizer,
+    hp,
+    update,
+    validation_loss,
+    training_state=None,
+):
+    payload = {
         "agent_state_dict": policy.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "hp": hp,
@@ -121,20 +142,31 @@ def _checkpoint_payload(policy, optimizer, hp, update, validation_loss):
         "variant": hp.get("variant"),
         "update": update,
         "validation_loss": validation_loss,
-        "rng_state": {
-            "python": random.getstate(),
-            "numpy": np.random.get_state(),
-            "torch": torch.get_rng_state(),
-        },
+        "rng_state": capture_rng_state(),
     }
+    if hp.get("protocol") == "digit_writing_original_protocol3":
+        if hp.get("protocol_config") is None or hp.get("git_identity") is None:
+            raise ValueError("protocol3 checkpoints require config and Git identity")
+        payload["protocol_config_sha256"] = protocol_config_sha256(
+            hp["protocol_config"]
+        )
+        payload["git_identity"] = hp["git_identity"]
+    if training_state is not None:
+        payload["training_state"] = training_state
+    return payload
 
 
 def _run_validation(
     policy, hp, env_dict, network_noise=True, return_metrics=False
 ):
     seed = hp.get("validation_seed")
+    evaluator = (
+        _do_protocol3_eval
+        if hp.get("protocol") == "digit_writing_original_protocol3"
+        else do_eval
+    )
     if seed is None:
-        return do_eval(
+        return evaluator(
             policy,
             hp,
             env_dict=env_dict,
@@ -142,7 +174,7 @@ def _run_validation(
             return_metrics=return_metrics,
         )
     with _fixed_rng(seed):
-        return do_eval(
+        return evaluator(
             policy,
             hp,
             env_dict=env_dict,
@@ -238,6 +270,203 @@ def do_eval(
     print("\n")
 
     return averaged_metrics if return_metrics else total_test_loss
+
+
+def _protocol3_rollout_metrics(
+    policy,
+    hp,
+    environment_class,
+    *,
+    testing,
+    options,
+    network_noise,
+    deterministic,
+):
+    effector = mn.effector.RigidTendonArm26(mn.muscle.MujocoHillMuscle())
+    environment = environment_class(
+        effector=effector,
+        **hp.get("env_kwargs", {}),
+    )
+    reset_options = dict(options)
+    reset_options["deterministic"] = deterministic
+    observation, _ = environment.reset(
+        testing=testing,
+        seed=random.randrange(2**32),
+        options=reset_options,
+    )
+    batch_size = int(reset_options["batch_size"])
+    x = torch.zeros((batch_size, hp["hid_size"]))
+    h = torch.zeros_like(x)
+    positions = []
+    targets = []
+    timestep = 0
+    terminated = False
+    while not terminated:
+        with torch.no_grad():
+            x, h, action = policy(
+                observation,
+                x,
+                h,
+                noise=network_noise,
+            )
+            observation, _, terminated, info = environment.step(
+                timestep,
+                action=action,
+            )
+        positions.append(info["states"]["fingertip"][:, None, :])
+        targets.append(info["goal"][:, None, :])
+        timestep += 1
+
+    actual = torch.cat(positions, dim=1)
+    target = torch.cat(targets, dim=1)
+    metrics = detached_position_metrics(
+        position_l1_metrics(actual, target, environment.epoch_bounds)
+    )
+    movement_start, movement_end = environment.epoch_bounds["movement"]
+    actual_movement = actual[:, movement_start:movement_end]
+    target_movement = target[:, movement_start:movement_end]
+    euclidean_error = torch.linalg.vector_norm(
+        actual_movement - target_movement,
+        dim=-1,
+    )
+    target_span = target_movement.amax(dim=1) - target_movement.amin(dim=1)
+    target_diagonal = torch.linalg.vector_norm(target_span, dim=-1)
+    if bool(torch.any(target_diagonal <= 0.0)):
+        raise RuntimeError("target bounding-box diagonal must be positive")
+    mean_error = euclidean_error.mean(dim=1)
+    endpoint_error = euclidean_error[:, -1]
+    actual_length = torch.linalg.vector_norm(
+        torch.diff(actual_movement, dim=1),
+        dim=-1,
+    ).sum(dim=1)
+    target_length = torch.linalg.vector_norm(
+        torch.diff(target_movement, dim=1),
+        dim=-1,
+    ).sum(dim=1)
+    if bool(torch.any(target_length <= 0.0)):
+        raise RuntimeError("target movement length must be positive")
+    metrics.update(
+        {
+            "mean_euclidean_error_m": float(mean_error.mean()),
+            "normalized_mean_error": float(
+                (mean_error / target_diagonal).mean()
+            ),
+            "endpoint_error_m": float(endpoint_error.mean()),
+            "normalized_endpoint_error": float(
+                (endpoint_error / target_diagonal).mean()
+            ),
+            "actual_path_length_m": float(actual_length.mean()),
+            "target_path_length_m": float(target_length.mean()),
+            "path_length_ratio": float((actual_length / target_length).mean()),
+        }
+    )
+    return metrics
+
+
+def _do_protocol3_eval(
+    policy,
+    hp,
+    env_dict=None,
+    network_noise=True,
+    return_metrics=False,
+):
+    if env_dict is None:
+        raise ValueError("protocol3 evaluation requires an explicit digit set")
+    gate2 = hp.get("condition_schedule") == "protocol3_gate2_single_condition"
+    deterministic = gate2 or bool(hp.get("deterministic_evaluation", False))
+    if gate2:
+        cases = (
+            (
+                next(iter(env_dict.values())),
+                False,
+                {
+                    "batch_size": hp["batch_size"],
+                    "reach_conds": np.full(
+                        hp["batch_size"],
+                        hp["gate2_direction_index"],
+                        dtype=np.int64,
+                    ),
+                    "speed_cond": 0,
+                    "delay_cond": hp["gate2_delay_index"],
+                },
+            ),
+        )
+    else:
+        cases = tuple(
+            (
+                environment_class,
+                True,
+                {
+                    "batch_size": 32,
+                    "reach_conds": np.arange(32, dtype=np.int64),
+                    "speed_cond": 0,
+                    "delay_cond": delay_index,
+                },
+            )
+            for environment_class in env_dict.values()
+            for delay_index in range(3)
+        )
+
+    totals = None
+    for environment_class, testing, options in cases:
+        metrics = _protocol3_rollout_metrics(
+            policy,
+            hp,
+            environment_class,
+            testing=testing,
+            options=options,
+            network_noise=network_noise,
+            deterministic=deterministic,
+        )
+        if totals is None:
+            totals = {name: 0.0 for name in metrics}
+        for name, value in metrics.items():
+            totals[name] += value
+    averaged = {
+        name: value / len(cases)
+        for name, value in totals.items()
+    }
+    return averaged if return_metrics else averaged["phase_normalized_position_l1"]
+
+
+def _balanced_protocol3_directions(batch_size):
+    return balanced_direction_indices(batch_size)
+
+
+def _protocol3_training_condition(env_list, hp):
+    schedule = hp["condition_schedule"]
+    if schedule == "independent_random_digit_delay_v1":
+        digit_index, delay_index, environment_seed = sample_protocol3_update(
+            random,
+            len(env_list),
+        )
+        environment_class = env_list[digit_index]
+        directions = _balanced_protocol3_directions(hp["batch_size"])
+    elif schedule == "protocol3_gate2_single_condition":
+        environment_class = env_list[0]
+        delay_index = hp["gate2_delay_index"]
+        environment_seed = random.randrange(2**32)
+        directions = np.full(
+            hp["batch_size"],
+            hp["gate2_direction_index"],
+            dtype=np.int64,
+        )
+    else:
+        raise ValueError(f"unsupported protocol3 condition schedule: {schedule}")
+    return environment_class, delay_index, environment_seed, {
+        "batch_size": hp["batch_size"],
+        "reach_conds": directions,
+        "speed_cond": 0,
+        "delay_cond": delay_index,
+    }
+
+
+def _new_protocol3_condition_counts():
+    return new_condition_counts()
+
+
+def _record_protocol3_condition(counts, digit, delay_index):
+    record_condition(counts, digit, delay_index)
 
 
 
@@ -672,7 +901,16 @@ def load_prev_training(model_path, model_file):
 
 
 
-def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
+def train_subsets_base_model(
+    model_path,
+    model_file,
+    hp=None,
+    env_dict=None,
+    *,
+    resume_checkpoint=None,
+    target_completed_updates=None,
+    manual_resume_authorized=False,
+):
 
     # create model path for saving model and hp
     create_dir(model_path)
@@ -702,6 +940,14 @@ def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
     interval = 100
     best_test_loss = np.inf
     last_test_loss = None
+    protocol3 = hp.get("protocol") == "digit_writing_original_protocol3"
+    condition_counts = _new_protocol3_condition_counts() if protocol3 else None
+    gate2_consecutive_passes = 0
+    gate2_passed = False
+    completed_updates = 0
+    best_checkpoint_update = None
+    validation_history = []
+    deterministic_sentinel_history = []
 
     if env_dict == None:
         env_dict = {
@@ -722,17 +968,203 @@ def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
 
     probs = [1/len(env_list)] * len(env_list)
 
-    for batch in range(hp["epochs"]):
+    gate2 = (
+        hp.get("condition_schedule") == "protocol3_gate2_single_condition"
+    )
+    if resume_checkpoint is not None:
+        if not protocol3 or gate2:
+            raise ValueError("only protocol3 full10 supports continuation resume")
+        if not manual_resume_authorized:
+            raise PermissionError("protocol3 resume requires explicit manual approval")
+        checkpoint = torch.load(
+            resume_checkpoint,
+            map_location=device,
+            weights_only=False,
+        )
+        restore_state = validate_protocol3_resume_checkpoint(
+            checkpoint,
+            hp["protocol_config"],
+        )
+        if checkpoint["git_identity"] != hp["git_identity"]:
+            raise ValueError("continuation checkpoint Git identity does not match")
+        if int(restore_state["completed_updates"]) != 5_000:
+            raise ValueError("protocol3 continuation must start at update 5000")
+        policy.load_state_dict(checkpoint["agent_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        completed_updates = int(restore_state["completed_updates"])
+        condition_counts = restore_state["condition_counts"]
+        validation_history = list(restore_state["validation_history"])
+        deterministic_sentinel_history = list(
+            restore_state.get("deterministic_sentinel_history", [])
+        )
+        test_losses = [
+            float(row["phase_normalized_position_l1"])
+            for row in validation_history
+        ]
+        best_test_loss = float(restore_state["best_validation_loss"])
+        best_checkpoint_update = int(restore_state["best_checkpoint_update"])
+        last_test_loss = float(restore_state["last_validation_loss"])
+        gate2_consecutive_passes = int(
+            restore_state.get("gate2_consecutive_passes", 0)
+        )
+        restore_rng_state(checkpoint["rng_state"])
+
+    stop_after_updates = int(
+        target_completed_updates
+        if target_completed_updates is not None
+        else hp.get("stop_after_updates", hp["epochs"])
+    )
+    if stop_after_updates > int(hp["epochs"]):
+        raise ValueError("target completed updates exceed the frozen maximum")
+    if stop_after_updates <= completed_updates:
+        raise ValueError("target completed updates must exceed the checkpoint state")
+
+    def protocol3_training_state():
+        return {
+            "completed_updates": completed_updates,
+            "next_update": completed_updates,
+            "condition_counts": condition_counts,
+            "validation_history": validation_history,
+            "deterministic_sentinel_history": deterministic_sentinel_history,
+            "best_validation_loss": best_test_loss,
+            "best_checkpoint_update": best_checkpoint_update,
+            "last_validation_loss": last_test_loss,
+            "gate2_consecutive_passes": gate2_consecutive_passes,
+        }
+
+    def validate_protocol3_checkpoint(*, count_gate2_pass):
+        nonlocal best_test_loss
+        nonlocal best_checkpoint_update
+        nonlocal gate2_consecutive_passes
+        nonlocal gate2_passed
+        nonlocal last_test_loss
+
+        validation_metrics = _run_validation(
+            policy,
+            hp,
+            env_dict,
+            network_noise=not gate2,
+            return_metrics=True,
+        )
+        if not all(np.isfinite(value) for value in validation_metrics.values()):
+            raise RuntimeError("protocol3 validation produced NaN or Inf")
+        test_loss = validation_metrics["phase_normalized_position_l1"]
+        last_test_loss = test_loss
+        test_losses.append(test_loss)
+        validation_row = {
+            "completed_updates": completed_updates,
+            **validation_metrics,
+        }
+        validation_history.append(validation_row)
+        np.savetxt(os.path.join(model_path, "test_losses.txt"), test_losses)
+        _append_jsonl(
+            os.path.join(model_path, "test_position_metrics.jsonl"),
+            validation_row,
+        )
+        _append_jsonl(
+            os.path.join(model_path, "training_condition_counts.jsonl"),
+            {
+                "completed_updates": completed_updates,
+                **condition_counts,
+            },
+        )
+        if not gate2:
+            sentinel_hp = dict(hp)
+            sentinel_hp["deterministic_evaluation"] = True
+            sentinel_metrics = _run_validation(
+                policy,
+                sentinel_hp,
+                env_dict,
+                network_noise=False,
+                return_metrics=True,
+            )
+            if not all(np.isfinite(value) for value in sentinel_metrics.values()):
+                raise RuntimeError("protocol3 deterministic sentinel produced NaN or Inf")
+            sentinel_row = {
+                "completed_updates": completed_updates,
+                **sentinel_metrics,
+            }
+            deterministic_sentinel_history.append(sentinel_row)
+            _append_jsonl(
+                os.path.join(model_path, "deterministic_sentinel_metrics.jsonl"),
+                sentinel_row,
+            )
+
+        if gate2 and count_gate2_pass:
+            passed_now = bool(
+                validation_metrics["normalized_mean_error"] <= 0.08
+                and validation_metrics["normalized_endpoint_error"] <= 0.05
+                and 0.85 <= validation_metrics["path_length_ratio"] <= 1.15
+            )
+            gate2_consecutive_passes = (
+                gate2_consecutive_passes + 1 if passed_now else 0
+            )
+            gate2_passed = gate2_consecutive_passes >= 2
+
+        is_best = test_loss <= best_test_loss
+        if is_best:
+            best_test_loss = test_loss
+            best_checkpoint_update = completed_updates
+            torch.save(
+                _checkpoint_payload(
+                    policy,
+                    optimizer,
+                    hp,
+                    completed_updates,
+                    test_loss,
+                    training_state=protocol3_training_state(),
+                ),
+                os.path.join(model_path, model_file),
+            )
+            print("Model Saved!")
+            print(f"Directory: {model_path}/{model_file}")
+            print("\n")
+
+    if protocol3 and completed_updates == 0:
+        validate_protocol3_checkpoint(count_gate2_pass=False)
+        initial_model_file = hp.get("initial_model_file")
+        if initial_model_file:
+            torch.save(
+                _checkpoint_payload(
+                    policy,
+                    optimizer,
+                    hp,
+                    0,
+                    last_test_loss,
+                    training_state=protocol3_training_state(),
+                ),
+                os.path.join(model_path, initial_model_file),
+            )
+
+    for batch in range(completed_updates, stop_after_updates):
 
         # initialize batch
         x = torch.zeros(size=(hp["batch_size"], hp["hid_size"]))
         h = torch.zeros(size=(hp["batch_size"], hp["hid_size"]))
 
-        rand_env = random.choices(env_list, probs)
-        env = rand_env[0](effector=effector, **hp.get("env_kwargs", {}))
+        if protocol3:
+            (
+                env_class,
+                delay_index,
+                environment_seed,
+                reset_options,
+            ) = _protocol3_training_condition(env_list, hp)
+            env = env_class(effector=effector, **hp.get("env_kwargs", {}))
+            _record_protocol3_condition(
+                condition_counts,
+                int(env_class.FIXED_DIGIT),
+                delay_index,
+            )
+        else:
+            rand_env = random.choices(env_list, probs)
+            env = rand_env[0](effector=effector, **hp.get("env_kwargs", {}))
+            reset_options = {"batch_size": hp["batch_size"]}
 
         # Get first timestep
-        obs, info = env.reset(options={"batch_size": hp["batch_size"]})
+        obs, info = env.reset(
+            seed=environment_seed if protocol3 else None,
+            options=reset_options,
+        )
         terminated = False
 
         xy = []
@@ -777,19 +1209,36 @@ def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
             policy.parameters(), max_norm=hp.get("grad_clip_norm", 1.0)
         )  # important!
         optimizer.step()
+        completed_updates = batch + 1
 
-        if (batch % interval == 0) and (batch != 0):
+        log_training_metrics = (
+            protocol3 and completed_updates % interval == 0
+        ) or (
+            not protocol3 and batch % interval == 0 and batch != 0
+        )
+        if log_training_metrics:
             mean_loss = sum(losses[-interval:]) / interval
             print("Batch {}/{} Done, mean policy loss: {}".format(batch, hp["epochs"], mean_loss))
             _append_jsonl(
                 os.path.join(model_path, "training_position_metrics.jsonl"),
-                {"update": batch, **detached_position_metrics(position_metrics)},
+                {
+                    "update": completed_updates if protocol3 else batch,
+                    **detached_position_metrics(position_metrics),
+                },
             )
 
-        if (batch % hp["save_iter"] == 0):
+        if protocol3 and completed_updates % hp["save_iter"] == 0:
+            validate_protocol3_checkpoint(count_gate2_pass=True)
+            if gate2_passed:
+                break
+        elif not protocol3 and (batch % hp["save_iter"] == 0):
             # Get test loss
             validation_metrics = _run_validation(
-                policy, hp, env_dict, return_metrics=True
+                policy,
+                hp,
+                env_dict,
+                network_noise=True,
+                return_metrics=True,
             )
             test_loss = validation_metrics["phase_normalized_position_l1"]
             last_test_loss = test_loss
@@ -804,33 +1253,60 @@ def train_subsets_base_model(model_path, model_file, hp=None, env_dict=None):
                 best_test_loss = test_loss
                 torch.save(
                     _checkpoint_payload(
-                        policy, optimizer, hp, batch, test_loss
+                        policy,
+                        optimizer,
+                        hp,
+                        batch,
+                        test_loss,
                     ),
                     os.path.join(model_path, model_file),
                 )
                 print("Model Saved!")
                 print(f"Directory: {model_path}/{model_file}")
                 print("\n")
-
     final_model_file = hp.get("final_model_file")
     if final_model_file:
+        training_state = protocol3_training_state() if protocol3 else None
         torch.save(
             _checkpoint_payload(
                 policy,
                 optimizer,
                 hp,
-                hp["epochs"] - 1,
+                completed_updates if protocol3 else completed_updates - 1,
                 last_test_loss,
+                training_state=training_state,
             ),
             os.path.join(model_path, final_model_file),
         )
+    early_audit_pending = bool(
+        protocol3
+        and not gate2
+        and completed_updates == 5_000
+        and stop_after_updates == 5_000
+    )
+    if early_audit_pending:
+        _write_json(
+            os.path.join(model_path, "early_audit_pending.json"),
+            {
+                "completed_updates": completed_updates,
+                "continuation_checkpoint": final_model_file,
+                "early_audit_pending": True,
+                "automatic_resume_allowed": False,
+            },
+        )
+        print("EARLY_AUDIT_PENDING=1")
     if hp.get("protocol_config") is not None:
         return {
             "variant": hp.get("variant"),
             "seed": hp.get("seed"),
-            "updates": hp["epochs"],
+            "updates": completed_updates,
             "best_validation_loss": best_test_loss,
             "last_validation_loss": last_test_loss,
+            "gate2_passed": gate2_passed if protocol3 else None,
+            "condition_counts": condition_counts,
+            "best_checkpoint_update": best_checkpoint_update,
+            "validation_history": validation_history if protocol3 else None,
+            "early_audit_pending": early_audit_pending,
         }
 
 
@@ -1125,6 +1601,12 @@ def _digit_env_dict(digits):
 
 
 def _validate_base_config(config):
+    protocol = config.get("protocol")
+    if protocol not in {
+        "digit_writing_original_protocol2",
+        "digit_writing_original_protocol3",
+    }:
+        raise ValueError("unsupported digit-writing protocol")
     if config["run_kind"] != "base_training":
         raise ValueError("base training requires run_kind=base_training")
     if config["variant"] not in {"full10", "heldout5"}:
@@ -1161,12 +1643,50 @@ def _validate_base_config(config):
     ):
         raise ValueError("base optimizer does not match the project-2 protocol")
     training = config["training"]
-    if (
-        training["batch_size"] != 32
-        or training["max_updates"] != 75_000
-        or training["validation_interval"] != 500
-    ):
-        raise ValueError("base training schedule does not match the protocol")
+    if protocol == "digit_writing_original_protocol2":
+        if (
+            training["batch_size"] != 32
+            or training["max_updates"] != 75_000
+            or training["validation_interval"] != 500
+        ):
+            raise ValueError("base training schedule does not match the protocol")
+    else:
+        if config["variant"] != "full10":
+            raise ValueError("protocol3 currently authorizes only full10 base training")
+        if (
+            training["batch_size"] != 32
+            or training["max_updates"] != 75_000
+            or training["validation_interval"] != 500
+            or training.get("stop_after_updates") != 5_000
+        ):
+            raise ValueError("protocol3 full10 must stop after the first 5000 updates")
+        if config.get("timing_mode") != "fixed_segment_timing":
+            raise ValueError("protocol3 requires fixed_segment_timing")
+        if config.get("selected_reference_steps") not in {50, 100}:
+            raise ValueError("protocol3 selected_reference_steps must be 50 or 100")
+        if config.get("direction_mode") != "balanced_8":
+            raise ValueError("protocol3 requires balanced_8 training directions")
+        if config.get("condition_schedule") != "independent_random_digit_delay_v1":
+            raise ValueError("protocol3 condition schedule differs from the protocol")
+        if config.get("digit_sampling") != "uniform_independent":
+            raise ValueError("protocol3 digit sampling must be uniform independent")
+        if config.get("delay_sampling") != "uniform_independent":
+            raise ValueError("protocol3 delay sampling must be uniform independent")
+        expected_scale = (
+            2.5 if "scale2p50" in config["geometry_config"] else 2.25
+        )
+        if config.get("scale_multiplier") != expected_scale:
+            raise ValueError("protocol3 scale identity does not match its geometry config")
+        output = config["output"]
+        if (
+            output.get("best_checkpoint") != "best_checkpoint.pt"
+            or output.get("initial_checkpoint") != "initial_checkpoint.pt"
+            or output.get("final_checkpoint")
+            != "early_continuation_checkpoint.pt"
+            or "digit_writing_original_protocol3" not in output["directory"]
+            or "protocol2" in output["directory"]
+        ):
+            raise ValueError("protocol3 full10 checkpoint/output identity is invalid")
     if config["regularization"] != {
         "l1_rate": 0.001,
         "l1_weight": 0.001,
@@ -1190,7 +1710,7 @@ def _base_hp_from_config(config):
     training = config["training"]
     regularization = config["regularization"]
     output = config["output"]
-    return {
+    hp = {
         "network": model["network"],
         "inp_size": model["input_size"],
         "hid_size": model["hidden_size"],
@@ -1216,7 +1736,23 @@ def _base_hp_from_config(config):
         "env_kwargs": {"geometry_config_path": config["geometry_config"]},
         "final_model_file": output["final_checkpoint"],
         "protocol_config": config,
+        "protocol": config["protocol"],
     }
+    if config["protocol"] == "digit_writing_original_protocol3":
+        hp.update(
+            {
+                "condition_schedule": config["condition_schedule"],
+                "git_identity": current_git_identity(
+                    Path(__file__).resolve().parent
+                ),
+                "initial_model_file": output.get("initial_checkpoint"),
+                "stop_after_updates": training.get(
+                    "stop_after_updates",
+                    training["max_updates"],
+                ),
+            }
+        )
+    return hp
 
 
 def train_digit_base_model(config):
@@ -1224,6 +1760,11 @@ def train_digit_base_model(config):
     _validate_base_config(config)
     output = config["output"]
     output_dir = Path(output["directory"])
+    if (
+        config["protocol"] == "digit_writing_original_protocol3"
+        and output_dir.exists()
+    ):
+        raise FileExistsError(f"Protocol3 output already exists: {output_dir}")
     output_dir.mkdir(parents=True, exist_ok=True)
     _write_json(output_dir / "resolved_config.json", config)
     return train_subsets_base_model(
@@ -1232,6 +1773,200 @@ def train_digit_base_model(config):
         hp=_base_hp_from_config(config),
         env_dict=_digit_env_dict(tuple(config["train_digits"])),
     )
+
+
+def _validate_protocol3_gate2_config(config):
+    if config.get("protocol") != "digit_writing_original_protocol3":
+        raise ValueError("Gate 2 requires protocol3")
+    if config.get("run_kind") != "protocol3_gate2":
+        raise ValueError("Gate 2 requires run_kind=protocol3_gate2")
+    if config.get("timing_mode") != "fixed_segment_timing":
+        raise ValueError("Gate 2 requires fixed_segment_timing")
+    if config.get("selected_reference_steps") not in {50, 100}:
+        raise ValueError("Gate 2 reference must be 50 or 100")
+    expected_scale = (
+        2.5 if "scale2p50" in config["geometry_config"] else 2.25
+    )
+    if config.get("scale_multiplier") != expected_scale:
+        raise ValueError("Gate 2 scale identity does not match its geometry config")
+    _require_cpu(config)
+    if config["training"] != {
+        "batch_size": 8,
+        "max_updates": 3000,
+        "validation_interval": 100,
+    }:
+        raise ValueError("Gate 2 training schedule differs from the protocol")
+    expected_cases = (
+        ("o1_digit1", 1, 0, 50),
+        ("o2_digit5", 5, 0, 50),
+        ("o3_digit8", 8, 0, 50),
+    )
+    actual_cases = tuple(
+        (
+            case["label"],
+            case["digit"],
+            case["direction_index"],
+            case["delay_steps"],
+        )
+        for case in config["cases"]
+    )
+    if actual_cases != expected_cases:
+        raise ValueError("Gate 2 cases must be O1 digit1, O2 digit5, O3 digit8")
+    model = config["model"]
+    if model != {
+        "network": "rnn",
+        "input_size": 28,
+        "hidden_size": 256,
+        "output_size": 6,
+        "activation": "softplus",
+        "recurrent_noise_std": 0.1,
+        "input_noise_std": 0.01,
+        "constrained": False,
+        "rnn_dt_ms": 10,
+        "rnn_tau_ms": 20,
+        "batch_first": True,
+    }:
+        raise ValueError("Gate 2 model differs from the frozen protocol")
+    if config["optimizer"] != {
+        "name": "Adam",
+        "learning_rate": 0.001,
+        "grad_clip_norm": 1.0,
+    }:
+        raise ValueError("Gate 2 optimizer differs from the frozen protocol")
+    if config["regularization"] != {
+        "l1_rate": 0.001,
+        "l1_weight": 0.001,
+        "l1_muscle_act": 0.01,
+        "simple_dynamics_weight": 0.001,
+    }:
+        raise ValueError("Gate 2 regularization differs from the frozen protocol")
+    if config["position_loss"] != {
+        "type": "phase_normalized_l1",
+        "stable_weight": 0.1,
+        "delay_weight": 0.1,
+        "movement_weight": 0.6,
+        "hold_weight": 0.2,
+    }:
+        raise ValueError("Gate 2 position loss differs from the frozen protocol")
+
+
+def train_digit_protocol3_gate2(config):
+    _validate_protocol3_gate2_config(config)
+    from digit_writing.geometry import load_geometry_config
+    from digit_writing.geometry_audit import build_workspace_audit
+    from digit_writing.protocol3_gate2 import audit_gate2_case
+
+    output = config["output"]
+    output_root = Path(output["directory"])
+    if output_root.exists():
+        raise FileExistsError(f"Gate 2 output already exists: {output_root}")
+    output_root.mkdir(parents=True)
+    _write_json(output_root / "resolved_config.json", config)
+    workspace_audit = build_workspace_audit(
+        load_geometry_config(config["geometry_config"])
+    )
+    _write_json(output_root / "workspace_audit.json", workspace_audit)
+    summaries = []
+    for case in config["cases"]:
+        case_directory = output_root / case["label"]
+        hp = _base_hp_from_config(config)
+        hp.update(
+            {
+                "variant": case["label"],
+                "condition_schedule": "protocol3_gate2_single_condition",
+                "gate2_direction_index": case["direction_index"],
+                "gate2_delay_index": PROTOCOL3_DELAYS.index(case["delay_steps"]),
+                "stop_after_updates": config["training"]["max_updates"],
+            }
+        )
+        training_summary = train_subsets_base_model(
+            str(case_directory),
+            output["best_checkpoint"],
+            hp=hp,
+            env_dict=_digit_env_dict((case["digit"],)),
+        )
+        final_checkpoint = case_directory / output["final_checkpoint"]
+        policy, checkpoint = load_digit_policy_checkpoint(
+            final_checkpoint,
+            expected_variant=case["label"],
+        )
+        checkpoint_error = None
+        try:
+            checkpoint_state = validate_protocol3_resume_checkpoint(
+                checkpoint,
+                config,
+            )
+            checkpoint_complete = bool(
+                checkpoint["git_identity"] == hp["git_identity"]
+                and int(checkpoint_state["completed_updates"])
+                == training_summary["updates"]
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            checkpoint_complete = False
+            checkpoint_error = str(error)
+        candidate_audit = audit_gate2_case(
+            policy,
+            hp,
+            DIGIT_ENV_CLASSES[case["digit"]],
+            case,
+            case_directory,
+            workspace_audit,
+        )
+        engineering_passed = bool(
+            checkpoint_complete and candidate_audit["engineering_passed"]
+        )
+        behavior_passed = bool(
+            training_summary["gate2_passed"]
+            and candidate_audit["behavior_passed"]
+        )
+        if not engineering_passed:
+            classification = "engineering_or_safety_failure"
+        elif not behavior_passed:
+            classification = "behavior_failure"
+        else:
+            classification = "provisional_pass_pending_qualitative_review"
+        summaries.append(
+            {
+                **case,
+                **training_summary,
+                "checkpoint_complete": checkpoint_complete,
+                "checkpoint_error": checkpoint_error,
+                "candidate_audit": candidate_audit,
+                "engineering_passed": engineering_passed,
+                "behavior_passed": behavior_passed,
+                "classification": classification,
+            }
+        )
+    engineering_passed = all(case["engineering_passed"] for case in summaries)
+    behavior_passed = all(case["behavior_passed"] for case in summaries)
+    automatic_metrics_passed = bool(engineering_passed and behavior_passed)
+    if not engineering_passed:
+        classification = "engineering_or_safety_failure"
+    elif not behavior_passed:
+        classification = "behavior_failure"
+    else:
+        classification = "provisional_pass_pending_qualitative_review"
+    result = {
+        "protocol": "digit_writing_original_protocol3",
+        "run_kind": "protocol3_gate2",
+        "git_identity": hp["git_identity"],
+        "scale_multiplier": config["scale_multiplier"],
+        "selected_reference_steps": config["selected_reference_steps"],
+        "cases": summaries,
+        "engineering_passed": engineering_passed,
+        "behavior_passed": behavior_passed,
+        "automatic_metrics_passed": automatic_metrics_passed,
+        "gradient_metrics_are_diagnostic_only": True,
+        "qualitative_overlay_review_required": automatic_metrics_passed,
+        "classification": classification,
+        "medium_fallback_allowed": bool(
+            config["selected_reference_steps"] == 50
+            and classification == "behavior_failure"
+        ),
+        "passed": False,
+    }
+    _write_json(output_root / "gate2_summary.json", result)
+    return result
 
 
 def load_digit_policy_checkpoint(checkpoint_path, expected_variant=None):

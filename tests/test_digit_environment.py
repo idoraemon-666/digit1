@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -143,6 +144,29 @@ class DigitEnvironmentTests(unittest.TestCase):
             np.testing.assert_allclose(
                 self.as_numpy(env.traj[batch_index]), expected.points, atol=2e-7
             )
+
+    def test_deterministic_observation_setting_persists_for_the_entire_trial(self):
+        env = self.make_env(DlyHalfReach)
+        options = {
+            "batch_size": 1,
+            "reach_conds": 0,
+            "speed_cond": 0,
+            "delay_cond": 0,
+            "deterministic": True,
+        }
+
+        with patch.object(env, "apply_noise", wraps=env.apply_noise) as apply_noise:
+            env.reset(testing=False, options=options)
+            action = th.zeros((1, env.action_space.shape[0]), dtype=th.float32)
+            env.step(0, action)
+            self.assertEqual(apply_noise.call_count, 0)
+
+            env.reset(
+                testing=False,
+                options={**options, "deterministic": False},
+            )
+            env.step(0, action)
+            self.assertGreater(apply_noise.call_count, 0)
 
     def test_training_validation_and_custom_delay_have_no_off_by_one(self):
         env = self.make_env(DlyHalfCircleCClk)

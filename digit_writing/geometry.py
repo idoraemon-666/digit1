@@ -19,7 +19,9 @@ import numpy as np
 
 from digit_writing.digit_geometry_final import (
     DT_S,
+    FIXED_SEGMENT_TIMING,
     GLOBAL_SCALE_M_PER_UNIT,
+    PHYSICAL_SPEED_ARCLENGTH,
     canonical_curve_a,
     canonical_curve_b,
     resample_linear_arclength,
@@ -32,8 +34,12 @@ FINAL_GEOMETRY_SOURCE = "digit_writing/digit_geometry_final.py"
 
 @dataclass(frozen=True)
 class GeometryConfig:
+    protocol: str
     geometry_source: str
     global_scale_m_per_unit: float
+    scale_multiplier: float
+    timing_mode: str
+    selected_reference_steps: int | None
     dt_seconds: float
     stable_steps: int
     delay_steps: tuple[int, ...]
@@ -47,11 +53,15 @@ class GeometryConfig:
 class PrimitiveBoundary:
     name: str
     template_key: str
+    timing_key: str
     start_index: int
     end_index: int
     intervals: int
     arc_length_m: float
+    actual_mean_speed_m_s: float
     canonical_sample_sha256: str
+    canonical_template_sha256: str
+    ordered_instance_sha256: str
 
 
 @dataclass(frozen=True)
@@ -63,6 +73,7 @@ class DigitTrajectory:
     movement_intervals: int
     movement_duration_s: float
     arc_length_m: float
+    actual_mean_speed_m_s: float
     points: np.ndarray
     boundaries: tuple[PrimitiveBoundary, ...]
 
@@ -82,11 +93,35 @@ def load_geometry_config(path: str | Path) -> GeometryConfig:
         raw = json.load(handle)
     if not isinstance(raw, dict):
         raise ValueError("geometry configuration must be a JSON object")
-    _require_exact_keys(
-        raw,
-        {"geometry_source", "global_scale_m_per_unit", "timing"},
-        "top-level",
-    )
+    protocol = str(raw.get("protocol", "digit_writing_original_protocol2"))
+    if protocol == "digit_writing_original_protocol2":
+        _require_exact_keys(
+            raw,
+            {"geometry_source", "global_scale_m_per_unit", "timing"},
+            "top-level",
+        )
+        scale_multiplier = 1.0
+        timing_mode = PHYSICAL_SPEED_ARCLENGTH
+        selected_reference_steps = None
+    elif protocol == "digit_writing_original_protocol3":
+        _require_exact_keys(
+            raw,
+            {
+                "protocol",
+                "geometry_source",
+                "global_scale_m_per_unit",
+                "scale_multiplier",
+                "timing_mode",
+                "selected_reference_steps",
+                "timing",
+            },
+            "top-level",
+        )
+        scale_multiplier = float(raw["scale_multiplier"])
+        timing_mode = str(raw["timing_mode"])
+        selected_reference_steps = int(raw["selected_reference_steps"])
+    else:
+        raise ValueError(f"unsupported geometry protocol: {protocol}")
     timing = raw["timing"]
     if not isinstance(timing, dict):
         raise ValueError("timing must be a JSON object")
@@ -105,8 +140,12 @@ def load_geometry_config(path: str | Path) -> GeometryConfig:
     )
 
     config = GeometryConfig(
+        protocol=protocol,
         geometry_source=str(raw["geometry_source"]),
         global_scale_m_per_unit=float(raw["global_scale_m_per_unit"]),
+        scale_multiplier=scale_multiplier,
+        timing_mode=timing_mode,
+        selected_reference_steps=selected_reference_steps,
         dt_seconds=float(timing["dt_seconds"]),
         stable_steps=int(timing["stable_steps"]),
         delay_steps=tuple(int(value) for value in timing["delay_steps"]),
@@ -121,13 +160,14 @@ def load_geometry_config(path: str | Path) -> GeometryConfig:
     )
     if config.geometry_source != FINAL_GEOMETRY_SOURCE:
         raise ValueError("geometry_source must name the final geometry authority")
+    expected_scale = GLOBAL_SCALE_M_PER_UNIT * config.scale_multiplier
     if not math.isclose(
         config.global_scale_m_per_unit,
-        GLOBAL_SCALE_M_PER_UNIT,
+        expected_scale,
         rel_tol=0.0,
         abs_tol=1e-15,
     ):
-        raise ValueError("configured global scale differs from the final geometry authority")
+        raise ValueError("configured global scale differs from the protocol scale")
     if not math.isclose(config.dt_seconds, DT_S, rel_tol=0.0, abs_tol=1e-15):
         raise ValueError("configured dt differs from the final geometry authority")
     if config.stable_steps < 0 or config.hold_steps < 0:
@@ -136,10 +176,23 @@ def load_geometry_config(path: str | Path) -> GeometryConfig:
         raise ValueError("delay_steps must contain non-negative values")
     if config.reach_distance_m <= 0.0:
         raise ValueError("reach_distance_m must be positive")
-    if config.training_reference_steps != (50, 100, 150):
-        raise ValueError("training_reference_steps must be [50, 100, 150]")
-    if config.validation_reference_steps != tuple(range(50, 150, 10)):
-        raise ValueError("validation_reference_steps must be 50 through 140 by 10")
+    if config.protocol == "digit_writing_original_protocol2":
+        if config.training_reference_steps != (50, 100, 150):
+            raise ValueError("training_reference_steps must be [50, 100, 150]")
+        if config.validation_reference_steps != tuple(range(50, 150, 10)):
+            raise ValueError("validation_reference_steps must be 50 through 140 by 10")
+    else:
+        if config.scale_multiplier not in {2.5, 2.25}:
+            raise ValueError("protocol3 scale_multiplier must be 2.5 or 2.25")
+        if config.timing_mode != FIXED_SEGMENT_TIMING:
+            raise ValueError("protocol3 requires fixed_segment_timing")
+        if config.selected_reference_steps not in {50, 100}:
+            raise ValueError("protocol3 selected_reference_steps must be 50 or 100")
+        expected_references = (int(config.selected_reference_steps),)
+        if config.training_reference_steps != expected_references:
+            raise ValueError("protocol3 training reference must match the selected value")
+        if config.validation_reference_steps != expected_references:
+            raise ValueError("protocol3 validation reference must match the selected value")
     return config
 
 
@@ -173,18 +226,39 @@ def _sample_hash(points: np.ndarray) -> str:
     return hashlib.sha256(canonical.tobytes()).hexdigest()
 
 
+def _identified_sample_hash(points: np.ndarray) -> str:
+    canonical = np.ascontiguousarray(points, dtype="<f8")
+    header = f"shape={canonical.shape};dtype=<f8;".encode("ascii")
+    return hashlib.sha256(header + canonical.tobytes()).hexdigest()
+
+
 @lru_cache(maxsize=256)
 def _sample_final(
     digit: int,
     reference_steps: int,
     dt_seconds: float,
     reach_distance_m: float,
+    scale_m_per_unit: float,
+    timing_mode: str,
+    selected_reference_steps: int | None,
 ) -> dict[str, object]:
-    result = sample_digit(
-        digit,
-        reach_distance_m / (reference_steps * dt_seconds),
-        dt_s=dt_seconds,
-    )
+    if timing_mode == PHYSICAL_SPEED_ARCLENGTH:
+        result = sample_digit(
+            digit,
+            reach_distance_m / (reference_steps * dt_seconds),
+            dt_s=dt_seconds,
+            scale_m_per_unit=scale_m_per_unit,
+            timing_mode=timing_mode,
+        )
+    else:
+        result = sample_digit(
+            digit,
+            None,
+            dt_s=dt_seconds,
+            scale_m_per_unit=scale_m_per_unit,
+            timing_mode=timing_mode,
+            selected_reference_steps=selected_reference_steps,
+        )
     path = np.asarray(result["path_m"], dtype=np.float64)
     path.setflags(write=False)
     result["path_m"] = path
@@ -204,12 +278,20 @@ def build_digit_trajectory(
         raise ValueError("anchor must be a two-vector")
     if not 0 <= digit <= 9:
         raise ValueError("digit must be an integer from 0 through 9")
+    if (
+        config.protocol == "digit_writing_original_protocol3"
+        and reference_steps != config.selected_reference_steps
+    ):
+        raise ValueError("protocol3 reference_steps must match the selected value")
 
     sampled = _sample_final(
         digit,
         int(reference_steps),
         config.dt_seconds,
         config.reach_distance_m,
+        config.global_scale_m_per_unit,
+        config.timing_mode,
+        config.selected_reference_steps,
     )
     local_points = np.asarray(sampled["path_m"], dtype=np.float64)
     points = _rotate(local_points, spatial_angle_rad) + anchor_array
@@ -224,26 +306,48 @@ def build_digit_trajectory(
         end_index = boundary_indices[index + 1]
         shared_id = record["shared_id"]
         if shared_id == "curve_A":
-            canonical_dense = canonical_curve_a() * GLOBAL_SCALE_M_PER_UNIT
+            canonical_dense = canonical_curve_a() * config.global_scale_m_per_unit
             canonical_sample = resample_linear_arclength(
                 canonical_dense, int(record["intervals"])
             )
         elif shared_id == "curve_B":
-            canonical_dense = canonical_curve_b() * GLOBAL_SCALE_M_PER_UNIT
+            canonical_dense = canonical_curve_b() * config.global_scale_m_per_unit
             canonical_sample = resample_linear_arclength(
                 canonical_dense, int(record["intervals"])
             )
         else:
             canonical_sample = local_points[start_index : end_index + 1]
+        ordered_instance = (
+            local_points[start_index : end_index + 1]
+            / config.global_scale_m_per_unit
+        )
+        if shared_id == "curve_A":
+            canonical_template = resample_linear_arclength(
+                canonical_curve_a(), int(record["intervals"])
+            )
+        elif shared_id == "curve_B":
+            canonical_template = resample_linear_arclength(
+                canonical_curve_b(), int(record["intervals"])
+            )
+        else:
+            canonical_template = ordered_instance
         boundaries.append(
             PrimitiveBoundary(
                 name=str(record["name"]),
                 template_key=str(shared_id or record["name"]),
+                timing_key=str(record["timing_key"]),
                 start_index=start_index,
                 end_index=end_index,
                 intervals=int(record["intervals"]),
                 arc_length_m=float(record["arc_length_m"]),
+                actual_mean_speed_m_s=float(record["actual_mean_speed_m_s"]),
                 canonical_sample_sha256=_sample_hash(canonical_sample),
+                canonical_template_sha256=_identified_sample_hash(
+                    canonical_template
+                ),
+                ordered_instance_sha256=_identified_sample_hash(
+                    ordered_instance
+                ),
             )
         )
 
@@ -258,14 +362,25 @@ def build_digit_trajectory(
         movement_intervals=movement_intervals,
         movement_duration_s=float(sampled["duration_s"]),
         arc_length_m=sum(boundary.arc_length_m for boundary in boundaries),
+        actual_mean_speed_m_s=(
+            sum(boundary.arc_length_m for boundary in boundaries)
+            / float(sampled["duration_s"])
+        ),
         points=points,
         boundaries=tuple(boundaries),
     )
 
 
 def build_time_audit(config: GeometryConfig) -> dict[str, object]:
+    audit_reference = (
+        int(config.selected_reference_steps)
+        if config.selected_reference_steps is not None
+        else 100
+    )
     digit_lengths = {
-        str(digit): build_digit_trajectory(digit, config, 100).arc_length_m
+        str(digit): build_digit_trajectory(
+            digit, config, audit_reference
+        ).arc_length_m
         for digit in range(10)
     }
 

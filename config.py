@@ -16,8 +16,11 @@ def config_parser():
 def load_protocol_config(path):
     with open(path, "r", encoding="utf-8") as handle:
         config = json.load(handle)
-    if config.get("protocol") != "digit_writing_original_protocol2":
-        raise ValueError("not a digit_writing_original_protocol2 configuration")
+    if config.get("protocol") not in {
+        "digit_writing_original_protocol2",
+        "digit_writing_original_protocol3",
+    }:
+        raise ValueError("not a supported digit-writing protocol configuration")
     return config
 
 
@@ -28,6 +31,10 @@ def run_protocol_config(path):
         from train import train_digit_base_model
 
         return train_digit_base_model(config)
+    if run_kind == "protocol3_gate2":
+        from train import train_digit_protocol3_gate2
+
+        return train_digit_protocol3_gate2(config)
     if run_kind == "composition":
         from digit_writing.experiments import run_composition_config
 
@@ -43,4 +50,8 @@ if __name__ == "__main__":
     arguments = config_parser().parse_args()
     if arguments.protocol_config is None:
         raise ValueError("--protocol_config is required for a protocol run")
-    run_protocol_config(arguments.protocol_config)
+    result = run_protocol_config(arguments.protocol_config)
+    if isinstance(result, dict) and result.get("run_kind") == "protocol3_gate2":
+        print(f"GATE2_CLASSIFICATION={result['classification']}")
+        print(f"GATE2_AUTOMATIC_METRICS_PASSED={int(result['automatic_metrics_passed'])}")
+        print(f"GATE2_MEDIUM_FALLBACK_ALLOWED={int(result['medium_fallback_allowed'])}")

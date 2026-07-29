@@ -1,0 +1,17 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "geometry_source": "digit_writing/digit_geometry_final.py",
+  "global_scale_m_per_unit": 0.16025641025641027,
+  "scale_multiplier": 2.5,
+  "timing_mode": "fixed_segment_timing",
+  "selected_reference_steps": 50,
+  "timing": {
+    "dt_seconds": 0.01,
+    "stable_steps": 25,
+    "delay_steps": [25, 50, 75],
+    "hold_steps": 25,
+    "reach_distance_m": 0.25,
+    "training_reference_steps": [50],
+    "validation_reference_steps": [50]
+  }
+}

@@ -44,6 +44,7 @@ class DigitWritingEnv(env.Environment):
             raise ValueError("digit environments require action_frame_stacking=0")
         self.obs_noise[: self.skeleton.space_dim] = [0.0] * self.skeleton.space_dim
         self.dt = self.geometry_config.dt_seconds
+        self._deterministic_observations = False
 
     def get_obs(
         self, t: int, action: th.Tensor | np.ndarray | None = None, deterministic: bool = False
@@ -68,6 +69,20 @@ class DigitWritingEnv(env.Environment):
             obs = self.apply_noise(obs, noise=self.obs_noise)
         return obs if self.differentiable else self.detach(obs)
 
+    def get_proprioception(self) -> th.Tensor:
+        if not self._deterministic_observations:
+            return super().get_proprioception()
+        muscle_length = self.states["muscle"][:, 1:2, :] / self.muscle.l0_ce
+        muscle_velocity = self.states["muscle"][:, 2:3, :] / self.muscle.vmax
+        return th.concatenate(
+            [muscle_length, muscle_velocity], dim=-1
+        ).squeeze(dim=1)
+
+    def get_vision(self) -> th.Tensor:
+        if not self._deterministic_observations:
+            return super().get_vision()
+        return self.states["fingertip"]
+
     def step(
         self,
         t: int,
@@ -81,7 +96,11 @@ class DigitWritingEnv(env.Environment):
         noisy_action = action
         self.effector.step(noisy_action, **kwargs)
 
-        obs = self.get_obs(t, action=noisy_action)
+        obs = self.get_obs(
+            t,
+            action=noisy_action,
+            deterministic=self._deterministic_observations,
+        )
         reward = None if self.differentiable else np.zeros((action.shape[0], 1))
         terminated = bool(t >= self.max_ep_duration)
         self.hidden_goal = self._target_at(t)
@@ -108,7 +127,7 @@ class DigitWritingEnv(env.Environment):
         batch_size = int(options.get("batch_size", 1))
         if batch_size < 1:
             raise ValueError("batch_size must be positive")
-        deterministic = bool(options.get("deterministic", False))
+        self._deterministic_observations = bool(options.get("deterministic", False))
 
         self.current_digit = self._resolve_digit(options.get("digit"))
         direction_count = 32 if testing else 8
@@ -168,7 +187,7 @@ class DigitWritingEnv(env.Environment):
         self.obs_buffer["action"] = [action] * self.action_frame_stacking
 
         action_output = action if self.differentiable else self.detach(action)
-        obs = self.get_obs(0, deterministic=deterministic)
+        obs = self.get_obs(0, deterministic=self._deterministic_observations)
         info = {
             "states": self._maybe_detach_states(),
             "action": action_output,

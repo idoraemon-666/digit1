@@ -1,0 +1,51 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_gate2",
+  "variant": "gate2",
+  "seed": 42,
+  "validation_seed": 1042,
+  "device": "cpu",
+  "geometry_config": "configurations/digit_writing_original_protocol3_geometry_scale2p25_ref50.json",
+  "scale_multiplier": 2.25,
+  "timing_mode": "fixed_segment_timing",
+  "selected_reference_steps": 50,
+  "condition_schedule": "protocol3_gate2_matrix_v1",
+  "cases": [
+    {"label": "o1_digit1", "digit": 1, "direction_index": 0, "delay_steps": 50},
+    {"label": "o2_digit5", "digit": 5, "direction_index": 0, "delay_steps": 50},
+    {"label": "o3_digit8", "digit": 8, "direction_index": 0, "delay_steps": 50}
+  ],
+  "model": {
+    "network": "rnn",
+    "input_size": 28,
+    "hidden_size": 256,
+    "output_size": 6,
+    "activation": "softplus",
+    "recurrent_noise_std": 0.1,
+    "input_noise_std": 0.01,
+    "constrained": false,
+    "rnn_dt_ms": 10,
+    "rnn_tau_ms": 20,
+    "batch_first": true
+  },
+  "optimizer": {"name": "Adam", "learning_rate": 0.001, "grad_clip_norm": 1.0},
+  "training": {"batch_size": 8, "max_updates": 3000, "validation_interval": 100},
+  "position_loss": {
+    "type": "phase_normalized_l1",
+    "stable_weight": 0.1,
+    "delay_weight": 0.1,
+    "movement_weight": 0.6,
+    "hold_weight": 0.2
+  },
+  "regularization": {
+    "l1_rate": 0.001,
+    "l1_weight": 0.001,
+    "l1_muscle_act": 0.01,
+    "simple_dynamics_weight": 0.001
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p25/ref50/gate2",
+    "best_checkpoint": "best_checkpoint.pt",
+    "final_checkpoint": "final_continuation_checkpoint.pt"
+  }
+}

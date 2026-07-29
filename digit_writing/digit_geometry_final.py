@@ -48,6 +48,17 @@ DIGIT0_HEIGHT_M = 2.0 * 0.035 * 0.8791208791208792
 DIGIT0_HEIGHT_UNITS = 0.96
 GLOBAL_SCALE_M_PER_UNIT = DIGIT0_HEIGHT_M / DIGIT0_HEIGHT_UNITS
 
+PHYSICAL_SPEED_ARCLENGTH = "physical_speed_arclength"
+FIXED_SEGMENT_TIMING = "fixed_segment_timing"
+FAST_BASE_INTERVALS = {
+    "line": 30,
+    "curve_A": 40,
+    "curve_B": 45,
+    "ellipse_5_4": 70,
+    "ellipse_4_3": 85,
+    "independent_uji8": 100,
+}
+
 TRAIN_SPEEDS_MPS = {
     "fast": 0.5000000000,
     "medium": 0.2500000000,
@@ -74,8 +85,33 @@ class Segment:
     points_units: np.ndarray
     shared_id: str | None = None
 
-    def points_m(self) -> np.ndarray:
-        return np.asarray(self.points_units, dtype=np.float64) * GLOBAL_SCALE_M_PER_UNIT
+    def points_m(
+        self, scale_m_per_unit: float = GLOBAL_SCALE_M_PER_UNIT
+    ) -> np.ndarray:
+        return np.asarray(self.points_units, dtype=np.float64) * scale_m_per_unit
+
+
+def timing_key(segment: Segment) -> str:
+    if segment.shared_id in {"curve_A", "curve_B"}:
+        return str(segment.shared_id)
+    if segment.name.startswith("ellipse_5_4"):
+        return "ellipse_5_4"
+    if segment.name == "ellipse_4_3":
+        return "ellipse_4_3"
+    if segment.name == "independent_uji8":
+        return "independent_uji8"
+    return "line"
+
+
+def segment_intervals(segment: Segment, selected_reference_steps: int) -> int:
+    if selected_reference_steps not in {50, 100}:
+        raise ValueError("selected_reference_steps must be 50 or 100")
+    scaled = (
+        FAST_BASE_INTERVALS[timing_key(segment)]
+        * selected_reference_steps
+        / 50.0
+    )
+    return int(math.floor(scaled + 0.5))
 
 
 def _bezier(control_points: Iterable[Iterable[float]], n: int = 2001) -> np.ndarray:
@@ -321,11 +357,31 @@ def resample_linear_arclength(points: np.ndarray, n_intervals: int) -> np.ndarra
 
 def sample_digit(
     digit: int,
-    speed_mps: float,
+    speed_mps: float | None,
     dt_s: float = DT_S,
+    *,
+    scale_m_per_unit: float = GLOBAL_SCALE_M_PER_UNIT,
+    timing_mode: str = PHYSICAL_SPEED_ARCLENGTH,
+    selected_reference_steps: int | None = None,
 ) -> dict[str, object]:
-    if speed_mps <= 0.0 or dt_s <= 0.0:
-        raise ValueError("speed_mps and dt_s must be positive")
+    if dt_s <= 0.0:
+        raise ValueError("dt_s must be positive")
+    if scale_m_per_unit <= 0.0:
+        raise ValueError("scale_m_per_unit must be positive")
+    if timing_mode == PHYSICAL_SPEED_ARCLENGTH:
+        if speed_mps is None or speed_mps <= 0.0:
+            raise ValueError("speed_mps must be positive for physical-speed timing")
+        if selected_reference_steps is not None:
+            raise ValueError(
+                "selected_reference_steps is not used for physical-speed timing"
+            )
+    elif timing_mode == FIXED_SEGMENT_TIMING:
+        if selected_reference_steps not in {50, 100}:
+            raise ValueError(
+                "fixed-segment timing requires selected_reference_steps 50 or 100"
+            )
+    else:
+        raise ValueError(f"unsupported timing_mode: {timing_mode}")
     digits = build_digit_segments_units()
     if digit not in digits:
         raise ValueError(f"unknown digit: {digit}")
@@ -334,19 +390,25 @@ def sample_digit(
     segment_records: list[dict[str, object]] = []
     boundaries = [0]
     for segment in digits[digit]:
-        dense_m = segment.points_m()
+        dense_m = segment.points_m(scale_m_per_unit)
         length_m = arc_length(dense_m)
-        intervals = int(math.ceil(length_m / (speed_mps * dt_s)))
-        intervals = max(intervals, 1)
+        if timing_mode == PHYSICAL_SPEED_ARCLENGTH:
+            intervals = int(math.ceil(length_m / (float(speed_mps) * dt_s)))
+            intervals = max(intervals, 1)
+        else:
+            intervals = segment_intervals(segment, int(selected_reference_steps))
         sampled = resample_linear_arclength(dense_m, intervals)
+        actual_mean_speed_m_s = length_m / (intervals * dt_s)
         sampled_segments.append(sampled)
         segment_records.append(
             {
                 "name": segment.name,
                 "shared_id": segment.shared_id,
+                "timing_key": timing_key(segment),
                 "arc_length_m": length_m,
                 "intervals": intervals,
                 "samples": intervals + 1,
+                "actual_mean_speed_m_s": actual_mean_speed_m_s,
             }
         )
         boundaries.append(boundaries[-1] + intervals)
@@ -359,6 +421,9 @@ def sample_digit(
     return {
         "digit": digit,
         "speed_mps": speed_mps,
+        "timing_mode": timing_mode,
+        "selected_reference_steps": selected_reference_steps,
+        "scale_m_per_unit": scale_m_per_unit,
         "dt_s": dt_s,
         "path_m": path,
         "movement_intervals": len(path) - 1,

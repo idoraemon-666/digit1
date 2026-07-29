@@ -143,6 +143,11 @@ def build_workspace_audit(config: GeometryConfig) -> dict[str, object]:
             torch.as_tensor(initial_joint_state[None, :], dtype=torch.float32)
         )
     anchor = initial_cartesian_state.detach().cpu().numpy()[0, :2].astype(np.float64)
+    audit_reference = (
+        int(config.selected_reference_steps)
+        if config.selected_reference_steps is not None
+        else 100
+    )
 
     conditions = []
     all_points = []
@@ -153,7 +158,7 @@ def build_workspace_audit(config: GeometryConfig) -> dict[str, object]:
             trajectory = build_digit_trajectory(
                 digit,
                 config,
-                100,
+                audit_reference,
                 spatial_angle_rad=float(angle),
                 anchor=anchor,
             )
@@ -197,14 +202,16 @@ def build_workspace_audit(config: GeometryConfig) -> dict[str, object]:
     maximum_fk_error = max(row["maximum_motor_fk_error_m"] for row in conditions)
 
     digit_lengths = {
-        digit: build_digit_trajectory(digit, config, 100).arc_length_m
+        digit: build_digit_trajectory(digit, config, audit_reference).arc_length_m
         for digit in range(10)
     }
     longest_digit = max(digit_lengths, key=digit_lengths.get)
     dynamic_smoke = []
-    for reference_steps in (
-        min(config.training_reference_steps),
-        max(config.training_reference_steps),
+    for reference_steps in sorted(
+        {
+            min(config.training_reference_steps),
+            max(config.training_reference_steps),
+        }
     ):
         for direction_index, angle in enumerate(validation_angles()):
             trajectory = build_digit_trajectory(
@@ -374,18 +381,23 @@ def generate_audit_figures(
     else:
         output.mkdir(parents=True)
 
+    audit_reference = (
+        int(config.selected_reference_steps)
+        if config.selected_reference_steps is not None
+        else 100
+    )
     axis_limit = 0.0
     for digit in range(10):
         for angle in validation_angles():
             points = build_digit_trajectory(
-                digit, config, 100, spatial_angle_rad=float(angle)
+                digit, config, audit_reference, spatial_angle_rad=float(angle)
             ).points
             axis_limit = max(axis_limit, float(np.linalg.norm(points, axis=1).max()))
     axis_limit *= 1.08
 
     manifest = []
     for digit in range(10):
-        trajectory = build_digit_trajectory(digit, config, 100)
+        trajectory = build_digit_trajectory(digit, config, audit_reference)
         figure, axis = plt.subplots(figsize=(5, 5))
         _plot_trajectory(axis, trajectory, axis_limit)
         axis.set_title(f"Digit {digit}: prescribed direction")
@@ -416,7 +428,7 @@ def generate_audit_figures(
             trajectory = build_digit_trajectory(
                 digit,
                 config,
-                100,
+                audit_reference,
                 spatial_angle_rad=float(angle),
             )
             _plot_trajectory(axis, trajectory, axis_limit)
@@ -467,7 +479,7 @@ def run_geometry_audit(config_path: str | Path, output_directory: str | Path) ->
     _write_json(output / "figure_manifest.json", figure_manifest)
 
     passed = (
-        not time_audit["primitives_with_fewer_than_two_intervals"]
+        not time_audit["segments_with_fewer_than_two_intervals"]
         and workspace_audit["passed"]
         and figure_manifest["figure_count"] == 18
     )
@@ -475,7 +487,7 @@ def run_geometry_audit(config_path: str | Path, output_directory: str | Path) ->
         "config_path": str(config_file),
         "config_sha256": _file_sha256(config_file),
         "geometry_time_passed": not bool(
-            time_audit["primitives_with_fewer_than_two_intervals"]
+            time_audit["segments_with_fewer_than_two_intervals"]
         ),
         "workspace_passed": workspace_audit["passed"],
         "figures_passed": figure_manifest["figure_count"] == 18,
