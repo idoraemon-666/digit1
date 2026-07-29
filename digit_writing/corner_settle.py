@@ -11,7 +11,7 @@ import numpy as np
 from digit_writing.geometry import DigitTrajectory, GeometryConfig, build_digit_trajectory
 
 
-CORNER_DIGITS = (4, 7)
+CORNER_DIGITS = (2, 3, 4, 5, 7)
 CORNER_TURN_THRESHOLD_DEG = 60.0
 CORNER_SETTLE_INTERVALS = 10
 CORNER_SETTLE_PHYSICAL_MS = 100
@@ -93,7 +93,7 @@ def build_corner_settle_trajectory(
     """Insert only repeated target points after qualifying internal boundaries."""
 
     if digit not in CORNER_DIGITS:
-        raise ValueError("corner-settle diagnostic supports only digits 4 and 7")
+        raise ValueError("corner-settle diagnostic supports only digits 2, 3, 4, 5, and 7")
     if isinstance(settle_intervals, bool) or not isinstance(settle_intervals, int):
         raise TypeError("settle_intervals must be an integer")
     if settle_intervals not in {0, CORNER_SETTLE_INTERVALS}:

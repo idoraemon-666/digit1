@@ -33,7 +33,50 @@ CASE_SPECS = (
     ("digit7_baseline", 7, "baseline", 0, "digit7/baseline"),
     ("digit7_settle100ms", 7, "settle100ms", 10, "digit7/settle100ms"),
 )
+MEDIUM_CASE_SPECS = (
+    ("digit4_medium_baseline", 4, "baseline", 0, "digit4/baseline"),
+    ("digit4_medium_settle100ms", 4, "settle100ms", 10, "digit4/settle100ms"),
+    ("digit7_medium_baseline", 7, "baseline", 0, "digit7/baseline"),
+    ("digit7_medium_settle100ms", 7, "settle100ms", 10, "digit7/settle100ms"),
+    ("digit2_medium_baseline", 2, "baseline", 0, "digit2/baseline"),
+    ("digit2_medium_settle100ms", 2, "settle100ms", 10, "digit2/settle100ms"),
+    ("digit5_medium_baseline", 5, "baseline", 0, "digit5/baseline"),
+    ("digit5_medium_settle100ms", 5, "settle100ms", 10, "digit5/settle100ms"),
+    ("digit3_medium_baseline", 3, "baseline", 0, "digit3/baseline"),
+    ("digit3_medium_settle100ms", 3, "settle100ms", 10, "digit3/settle100ms"),
+)
 REVIEW_INTERVAL_UPDATES = 6000
+
+EXPERIMENT_SPECS = {
+    "corner_settle_fast_review6000": {
+        "selected_reference_steps": 50,
+        "source_gate2_config": (
+            "configurations/"
+            "digit_writing_original_protocol3_gate2_scale2p50_ref50.json"
+        ),
+        "condition_schedule": "protocol3_corner_settle_matrix_v1",
+        "case_specs": CASE_SPECS,
+        "output_directory": (
+            "runs/digit_writing_original_protocol3_corner_settle_gate/"
+            "scale2p50/ref50/review6000"
+        ),
+    },
+    "corner_settle_medium_five_digit_review6000": {
+        "selected_reference_steps": 100,
+        "source_gate2_config": (
+            "configurations/"
+            "digit_writing_original_protocol3_gate2_scale2p50_ref100.json"
+        ),
+        "condition_schedule": (
+            "protocol3_corner_settle_matrix_v2_medium_five_digit"
+        ),
+        "case_specs": MEDIUM_CASE_SPECS,
+        "output_directory": (
+            "runs/digit_writing_original_protocol3_corner_settle_gate/"
+            "scale2p50/ref100/five_digit_review6000"
+        ),
+    },
+}
 
 
 def validate_next_review_target(source_updates: int, target_updates: int) -> int:
@@ -71,6 +114,13 @@ def _resolve_repository_path(repository_root: Path, value: str) -> Path:
     return path
 
 
+def _experiment_spec(protocol_config: Mapping[str, Any]) -> Mapping[str, Any]:
+    variant = protocol_config.get("variant")
+    if variant not in EXPERIMENT_SPECS:
+        raise ValueError("corner-settle variant is not a frozen experiment")
+    return EXPERIMENT_SPECS[str(variant)]
+
+
 def _validate_config(
     repository_root: str | Path,
     protocol_config: Mapping[str, Any],
@@ -82,18 +132,22 @@ def _validate_config(
         raise ValueError("corner-settle gate requires Protocol3")
     if protocol_config.get("run_kind") != "protocol3_corner_settle_gate":
         raise ValueError("corner-settle run_kind is invalid")
-    if protocol_config.get("variant") != "corner_settle_fast_review6000":
-        raise ValueError("only the frozen fast 6000-update variant is allowed")
+    experiment = _experiment_spec(protocol_config)
     if protocol_config.get("device") != "cpu":
         raise ValueError("corner-settle gate is CPU-only")
-    if protocol_config.get("selected_reference_steps") != 50:
-        raise ValueError("the initial corner-settle gate is fast/ref50 only")
+    if (
+        protocol_config.get("selected_reference_steps")
+        != experiment["selected_reference_steps"]
+    ):
+        raise ValueError("corner-settle reference differs from its frozen variant")
     if protocol_config.get("scale_multiplier") != 2.5:
         raise ValueError("the initial corner-settle gate uses scale2p50")
     if protocol_config.get("timing_mode") != "fixed_segment_timing":
         raise ValueError("corner-settle gate requires fixed segment timing")
-    if protocol_config.get("condition_schedule") != "protocol3_corner_settle_matrix_v1":
+    if protocol_config.get("condition_schedule") != experiment["condition_schedule"]:
         raise ValueError("corner-settle matrix identity differs")
+    if protocol_config.get("source_gate2_config") != experiment["source_gate2_config"]:
+        raise ValueError("corner-settle source Gate 2 differs from its frozen variant")
 
     source_path = _resolve_repository_path(
         root, str(protocol_config["source_gate2_config"])
@@ -142,8 +196,8 @@ def _validate_config(
         )
         for case in protocol_config.get("cases", ())
     )
-    if actual_cases != CASE_SPECS:
-        raise ValueError("corner-settle cases must be the frozen matched 4/7 pairs")
+    if actual_cases != experiment["case_specs"]:
+        raise ValueError("corner-settle cases differ from the frozen matched pairs")
     for case in protocol_config["cases"]:
         if case.get("direction_index") != 0 or case.get("delay_steps") != 50:
             raise ValueError("corner-settle cases require direction 0 and delay 50")
@@ -156,11 +210,7 @@ def _validate_config(
     if output.get("final_checkpoint") != "final_continuation_checkpoint.pt":
         raise ValueError("corner-settle continuation checkpoint name differs")
     directory = str(output.get("directory", ""))
-    if (
-        not directory.startswith("runs/digit_writing_original_protocol3_corner_settle_gate/")
-        or "protocol2" in directory
-        or "full10" in directory
-    ):
+    if directory != experiment["output_directory"]:
         raise ValueError("corner-settle output namespace is invalid")
     return source
 
@@ -247,15 +297,16 @@ def prepare_experiment(
     result = {
         "protocol": config["protocol"],
         "run_kind": "protocol3_corner_settle_prepare",
+        "variant": config["variant"],
         "git_identity": current_git_identity(root),
         "source_gate2_config": config["source_gate2_config"],
         "source_gate2_config_sha256": protocol_config_sha256(source),
-        "selected_reference_steps": 50,
-        "settle_intervals": 10,
-        "physical_pause_ms": 100,
+        "selected_reference_steps": config["selected_reference_steps"],
+        "settle_intervals": CORNER_SETTLE_INTERVALS,
+        "physical_pause_ms": CORNER_SETTLE_PHYSICAL_MS,
         "training_updates": 0,
         "case_labels": [case["label"] for case in config["cases"]],
-        "parallel_process_count": 4,
+        "parallel_process_count": len(config["cases"]),
         "automatic_continuation_allowed": False,
         "automatic_medium_fallback_allowed": False,
         "formal_full10_started": False,
@@ -444,7 +495,7 @@ def run_continuation_case(
         / "runs"
         / "digit_writing_original_protocol3_corner_settle_gate"
         / "scale2p50"
-        / "ref50"
+        / f"ref{config['selected_reference_steps']}"
     ).resolve()
     try:
         source_root.relative_to(namespace)
@@ -656,14 +707,17 @@ def summarize_experiment(
     updates = {int(summary["completed_updates"]) for summary in summaries.values()}
     if len(updates) != 1 or next(iter(updates)) % REVIEW_INTERVAL_UPDATES != 0:
         raise ValueError("all paired cases must stop on the same 6000-update boundary")
-    paired_comparisons = {
-        "digit4": _pair_comparison(
-            summaries["digit4_baseline"], summaries["digit4_settle100ms"]
-        ),
-        "digit7": _pair_comparison(
-            summaries["digit7_baseline"], summaries["digit7_settle100ms"]
-        ),
-    }
+    paired_comparisons = {}
+    for digit in dict.fromkeys(int(case["digit"]) for case in config["cases"]):
+        digit_cases = {
+            str(case["condition"]): str(case["label"])
+            for case in config["cases"]
+            if int(case["digit"]) == digit
+        }
+        paired_comparisons[f"digit{digit}"] = _pair_comparison(
+            summaries[digit_cases["baseline"]],
+            summaries[digit_cases["settle100ms"]],
+        )
     engineering_passed = bool(
         all(bool(summary["engineering_passed"]) for summary in summaries.values())
         and all(pair["matched_initialization"] for pair in paired_comparisons.values())
@@ -687,10 +741,11 @@ def summarize_experiment(
     result = {
         "protocol": config["protocol"],
         "run_kind": "protocol3_corner_settle_gate",
+        "variant": config["variant"],
         "git_identity": current_git_identity(root),
-        "selected_reference_steps": 50,
-        "physical_pause_ms": 100,
-        "settle_intervals": 10,
+        "selected_reference_steps": config["selected_reference_steps"],
+        "physical_pause_ms": CORNER_SETTLE_PHYSICAL_MS,
+        "settle_intervals": CORNER_SETTLE_INTERVALS,
         "completed_updates": next(iter(updates)),
         "cases": summaries,
         "paired_comparisons": paired_comparisons,

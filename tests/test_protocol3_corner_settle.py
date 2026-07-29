@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -30,6 +31,11 @@ CONFIG_PATH = (
     / "configurations"
     / "digit_writing_original_protocol3_corner_settle_scale2p50_ref50.json"
 )
+MEDIUM_CONFIG_PATH = (
+    ROOT
+    / "configurations"
+    / "digit_writing_original_protocol3_corner_settle_scale2p50_ref100.json"
+)
 
 
 class Protocol3CornerSettleTests(unittest.TestCase):
@@ -37,6 +43,12 @@ class Protocol3CornerSettleTests(unittest.TestCase):
     def setUpClass(cls):
         cls.config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         cls.geometry = load_geometry_config(ROOT / cls.config["geometry_config"])
+        cls.medium_config = json.loads(
+            MEDIUM_CONFIG_PATH.read_text(encoding="utf-8")
+        )
+        cls.medium_geometry = load_geometry_config(
+            ROOT / cls.medium_config["geometry_config"]
+        )
 
     def test_config_is_a_strict_fast_6000_update_manual_gate(self):
         source = _validate_config(ROOT, self.config)
@@ -46,6 +58,215 @@ class Protocol3CornerSettleTests(unittest.TestCase):
         self.assertEqual(self.config["training"]["max_updates"], 6000)
         self.assertFalse(self.config["corner_settle"]["automatic_continuation"])
         self.assertFalse(self.config["corner_settle"]["automatic_medium_fallback"])
+
+    def test_medium_config_is_a_strict_five_digit_6000_update_manual_gate(self):
+        source = _validate_config(ROOT, self.medium_config)
+        self.assertEqual(source["selected_reference_steps"], 100)
+        self.assertEqual(self.medium_config["selected_reference_steps"], 100)
+        self.assertEqual(
+            self.medium_config["geometry_config"],
+            "configurations/"
+            "digit_writing_original_protocol3_geometry_scale2p50_ref100.json",
+        )
+        self.assertEqual(
+            [case["label"] for case in self.medium_config["cases"]],
+            [
+                "digit4_medium_baseline",
+                "digit4_medium_settle100ms",
+                "digit7_medium_baseline",
+                "digit7_medium_settle100ms",
+                "digit2_medium_baseline",
+                "digit2_medium_settle100ms",
+                "digit5_medium_baseline",
+                "digit5_medium_settle100ms",
+                "digit3_medium_baseline",
+                "digit3_medium_settle100ms",
+            ],
+        )
+        self.assertEqual(self.medium_config["corner_settle"]["settle_intervals"], 10)
+        self.assertEqual(self.medium_config["corner_settle"]["physical_pause_ms"], 100)
+        self.assertEqual(self.medium_config["training"]["max_updates"], 6000)
+        self.assertFalse(
+            self.medium_config["corner_settle"]["automatic_continuation"]
+        )
+        self.assertFalse(
+            self.medium_config["corner_settle"]["automatic_medium_fallback"]
+        )
+
+    def test_medium_five_digit_directions_sizes_corners_and_steps_are_exact(self):
+        angle = math.radians(55.0)
+        expected = {
+            2: {
+                "names": ("curve_A_2", "diagonal_55_2", "horizontal_2"),
+                "intervals": (80, 60, 60),
+                "deltas": (
+                    (0.48 * math.sin(angle), -0.48 * math.cos(angle)),
+                    (-0.64 * math.cos(angle), -0.64 * math.sin(angle)),
+                    (0.64, 0.0),
+                ),
+                "qualifies": (False, True),
+                "angle_ranges": ((0.0, 5.0), (124.999, 125.001)),
+                "baseline_intervals": 200,
+                "settle_intervals": 210,
+                "baseline_episode_steps": 301,
+                "settle_episode_steps": 311,
+            },
+            3: {
+                "names": ("curve_A_3", "curve_B_3"),
+                "intervals": (80, 90),
+                "deltas": ((0.0, -0.48), (0.0, -0.48)),
+                "qualifies": (True,),
+                "angle_ranges": ((170.0, 180.001),),
+                "baseline_intervals": 170,
+                "settle_intervals": 180,
+                "baseline_episode_steps": 271,
+                "settle_episode_steps": 281,
+            },
+            4: {
+                "names": ("horizontal_4", "diagonal_55_4", "vertical_4"),
+                "intervals": (60, 60, 60),
+                "deltas": ((-0.72, 0.0), (0.78 / math.tan(angle), 0.78), (0.0, -1.0)),
+                "qualifies": (True, True),
+                "angle_ranges": ((124.999, 125.001), (144.999, 145.001)),
+                "baseline_intervals": 180,
+                "settle_intervals": 200,
+                "baseline_episode_steps": 281,
+                "settle_episode_steps": 301,
+            },
+            5: {
+                "names": ("horizontal_5", "vertical_5", "curve_B_5"),
+                "intervals": (60, 60, 90),
+                "deltas": ((-0.42, 0.0), (0.0, -0.48), (0.0, -0.48)),
+                "qualifies": (True, True),
+                "angle_ranges": ((89.999, 90.001), (80.0, 90.001)),
+                "baseline_intervals": 210,
+                "settle_intervals": 230,
+                "baseline_episode_steps": 311,
+                "settle_episode_steps": 331,
+            },
+            7: {
+                "names": ("horizontal_7", "diagonal_63_435_7"),
+                "intervals": (60, 60),
+                "deltas": ((0.64, 0.0), (-0.48, -0.96)),
+                "qualifies": (True,),
+                "angle_ranges": ((116.564, 116.566),),
+                "baseline_intervals": 120,
+                "settle_intervals": 130,
+                "baseline_episode_steps": 221,
+                "settle_episode_steps": 231,
+            },
+        }
+        scale = self.medium_geometry.global_scale_m_per_unit
+        self.assertEqual(self.medium_geometry.selected_reference_steps, 100)
+        self.assertEqual(self.medium_geometry.dt_seconds, 0.01)
+        self.assertAlmostEqual(scale, 0.16025641025641027, places=15)
+        for digit, frozen in expected.items():
+            with self.subTest(digit=digit):
+                baseline = build_digit_trajectory(
+                    digit, self.medium_geometry, 100
+                )
+                no_settle = build_corner_settle_trajectory(
+                    digit, self.medium_geometry, 100, settle_intervals=0
+                )
+                settle = build_corner_settle_trajectory(
+                    digit,
+                    self.medium_geometry,
+                    100,
+                    settle_intervals=CORNER_SETTLE_INTERVALS,
+                )
+                np.testing.assert_array_equal(no_settle.points, baseline.points)
+                self.assertEqual(
+                    tuple(boundary.name for boundary in baseline.boundaries),
+                    frozen["names"],
+                )
+                self.assertEqual(
+                    tuple(boundary.intervals for boundary in baseline.boundaries),
+                    frozen["intervals"],
+                )
+                self.assertEqual(
+                    baseline.movement_intervals, frozen["baseline_intervals"]
+                )
+                self.assertEqual(
+                    settle.movement_intervals, frozen["settle_intervals"]
+                )
+                self.assertAlmostEqual(
+                    baseline.movement_duration_s,
+                    frozen["baseline_intervals"] * 0.01,
+                    places=15,
+                )
+                self.assertAlmostEqual(
+                    settle.movement_duration_s,
+                    frozen["settle_intervals"] * 0.01,
+                    places=15,
+                )
+                baseline_episode_steps = (
+                    self.medium_geometry.stable_steps
+                    + 50
+                    + baseline.movement_intervals
+                    + 1
+                    + self.medium_geometry.hold_steps
+                )
+                settle_episode_steps = (
+                    self.medium_geometry.stable_steps
+                    + 50
+                    + settle.movement_intervals
+                    + 1
+                    + self.medium_geometry.hold_steps
+                )
+                self.assertEqual(
+                    baseline_episode_steps, frozen["baseline_episode_steps"]
+                )
+                self.assertEqual(
+                    settle_episode_steps, frozen["settle_episode_steps"]
+                )
+                for boundary, expected_delta in zip(
+                    baseline.boundaries, frozen["deltas"]
+                ):
+                    actual_delta = (
+                        baseline.points[boundary.end_index]
+                        - baseline.points[boundary.start_index]
+                    )
+                    np.testing.assert_allclose(
+                        actual_delta,
+                        np.asarray(expected_delta) * scale,
+                        rtol=0.0,
+                        atol=1e-14,
+                    )
+                self.assertEqual(
+                    tuple(corner.turn_qualifies for corner in settle.corners),
+                    frozen["qualifies"],
+                )
+                self.assertEqual(
+                    tuple(corner.settle_applied for corner in settle.corners),
+                    frozen["qualifies"],
+                )
+                for corner, (lower, upper) in zip(
+                    settle.corners, frozen["angle_ranges"]
+                ):
+                    self.assertGreaterEqual(corner.turn_angle_deg, lower)
+                    self.assertLessEqual(corner.turn_angle_deg, upper)
+                keep = np.ones(len(settle.points), dtype=bool)
+                for corner in settle.corners:
+                    if not corner.settle_applied:
+                        self.assertEqual(corner.settle_intervals, 0)
+                        continue
+                    keep[
+                        corner.settle_start_index : corner.settle_end_index
+                    ] = False
+                    repeated = settle.points[
+                        corner.settle_start_index : corner.settle_end_index
+                    ]
+                    expected_repeated = np.repeat(
+                        settle.points[corner.connection_index][None, :],
+                        CORNER_SETTLE_INTERVALS,
+                        axis=0,
+                    )
+                    np.testing.assert_array_equal(repeated, expected_repeated)
+                np.testing.assert_array_equal(settle.points[keep], baseline.points)
+                self.assertEqual(
+                    [boundary.ordered_instance_sha256 for boundary in settle.base.boundaries],
+                    [boundary.ordered_instance_sha256 for boundary in baseline.boundaries],
+                )
 
     def test_zero_intervals_is_bitwise_identical_to_formal_baseline(self):
         for digit in (4, 7):
@@ -184,6 +405,32 @@ class Protocol3CornerSettleTests(unittest.TestCase):
         self.assertIn("--manual-resume-authorized", continuation)
         self.assertIn("AUTOMATIC_CONTINUATION_STARTED=0", continuation)
         self.assertIn("AUTOMATIC_MEDIUM_FALLBACK_STARTED=0", continuation)
+
+    def test_medium_runner_has_ten_isolated_single_thread_cpu_cases(self):
+        runner = (
+            ROOT
+            / "server"
+            / "run_digit_writing_original_protocol3_corner_settle_medium_five_digit_parallel.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "CASES=(digit4_medium_baseline digit4_medium_settle100ms "
+            "digit7_medium_baseline digit7_medium_settle100ms "
+            "digit2_medium_baseline digit2_medium_settle100ms "
+            "digit5_medium_baseline digit5_medium_settle100ms "
+            "digit3_medium_baseline digit3_medium_settle100ms)",
+            runner,
+        )
+        self.assertIn("selected_reference_steps\"] == 100", runner)
+        self.assertIn("AVAILABLE_CPUS < 10", runner)
+        self.assertIn("CPU_QUOTA / CPU_PERIOD < 10", runner)
+        self.assertIn(
+            "CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1",
+            runner,
+        )
+        self.assertIn("MEDIUM_FIVE_DIGIT_CASES=10", runner)
+        self.assertIn("AUTOMATIC_CONTINUATION_STARTED=0", runner)
+        self.assertIn("AUTOMATIC_REFERENCE_FALLBACK_STARTED=0", runner)
+        self.assertIn("FORMAL_FULL10_STARTED=0", runner)
 
     def test_corner_settle_resume_matches_uninterrupted_updates(self):
         from train import (
