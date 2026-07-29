@@ -907,6 +907,41 @@ def load_prev_training(model_path, model_file):
 
 
 
+def _apply_digit8_lr_ablation_optimizer_override(optimizer, checkpoint, hp):
+    learning_rate = float(hp["experimental_resume_learning_rate"])
+    if not np.isfinite(learning_rate) or learning_rate <= 0.0:
+        raise ValueError(
+            "experimental resume learning rate must be finite and positive"
+        )
+    source_learning_rate = float(checkpoint.get("hp", {}).get("lr", -1.0))
+    if source_learning_rate != float(hp["experimental_source_learning_rate"]):
+        raise ValueError(
+            "source checkpoint learning rate differs from the ablation"
+        )
+    source_group_learning_rates = tuple(
+        float(group["lr"]) for group in optimizer.param_groups
+    )
+    if (
+        source_learning_rate <= 0.0
+        or not source_group_learning_rates
+        or any(
+            not np.isclose(
+                value,
+                source_learning_rate,
+                rtol=0.0,
+                atol=0.0,
+            )
+            for value in source_group_learning_rates
+        )
+    ):
+        raise ValueError(
+            "source checkpoint optimizer learning rate is inconsistent"
+        )
+    for group in optimizer.param_groups:
+        group["lr"] = learning_rate
+    return source_group_learning_rates
+
+
 def train_subsets_base_model(
     model_path,
     model_file,
@@ -981,6 +1016,54 @@ def train_subsets_base_model(
         "protocol3_gate2_single_condition",
         "protocol3_corner_settle_single_condition",
     }
+    experimental_resume_learning_rate = hp.get(
+        "experimental_resume_learning_rate"
+    )
+    experimental_disable_gate2_early_stopping = bool(
+        hp.get("experimental_disable_gate2_early_stopping", False)
+    )
+    experimental_lr_arms = {
+        "digit8_medium_lr1e3": 0.001,
+        "digit8_medium_lr3e4": 0.0003,
+        "digit8_medium_lr1e4": 0.0001,
+    }
+    if (
+        experimental_resume_learning_rate is not None
+        or experimental_disable_gate2_early_stopping
+    ) and not (
+        protocol3
+        and gate2
+        and resume_checkpoint is not None
+        and manual_resume_authorized
+        and expected_resume_repository_head is not None
+    ):
+        raise ValueError(
+            "experimental Gate 2 resume controls require an authorized "
+            "single-condition continuation"
+        )
+    if (
+        experimental_resume_learning_rate is not None
+        or experimental_disable_gate2_early_stopping
+    ):
+        experimental_arm = hp.get("experimental_lr_ablation_arm")
+        if (
+            experimental_resume_learning_rate is None
+            or hp.get("experimental_run_kind")
+            != "protocol3_digit8_equal_point_lr_ablation"
+            or experimental_arm not in experimental_lr_arms
+            or float(experimental_resume_learning_rate)
+            != experimental_lr_arms[experimental_arm]
+            or float(hp.get("experimental_source_learning_rate", -1.0))
+            != 0.001
+            or not experimental_disable_gate2_early_stopping
+            or hp.get("variant") != "o3_digit8"
+            or hp.get("gate2_direction_index") != 0
+            or hp.get("gate2_delay_index") != PROTOCOL3_DELAYS.index(50)
+            or env_dict is None
+            or len(env_dict) != 1
+            or next(iter(env_dict.values())).FIXED_DIGIT != 8
+        ):
+            raise ValueError("digit8 learning-rate ablation identity is invalid")
     if resume_checkpoint is not None:
         if not protocol3:
             raise ValueError("only protocol3 supports continuation resume")
@@ -1052,7 +1135,16 @@ def train_subsets_base_model(
                 raise ValueError("protocol3 continuation must start at update 5000")
         policy.load_state_dict(checkpoint["agent_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if experimental_resume_learning_rate is not None:
+            _apply_digit8_lr_ablation_optimizer_override(
+                optimizer, checkpoint, hp
+            )
         completed_updates = int(restore_state["completed_updates"])
+        if (
+            experimental_resume_learning_rate is not None
+            and completed_updates != 6000
+        ):
+            raise ValueError("digit8 learning-rate ablation must start at update 6000")
         condition_counts = restore_state["condition_counts"]
         validation_history = list(restore_state["validation_history"])
         deterministic_sentinel_history = list(
@@ -1075,6 +1167,11 @@ def train_subsets_base_model(
         if target_completed_updates is not None
         else hp.get("stop_after_updates", hp["epochs"])
     )
+    if (
+        experimental_resume_learning_rate is not None
+        and stop_after_updates != 7000
+    ):
+        raise ValueError("digit8 learning-rate ablation must stop at update 7000")
     if stop_after_updates > int(hp["epochs"]):
         single_condition_extension = bool(
             protocol3
@@ -1309,7 +1406,7 @@ def train_subsets_base_model(
 
         if protocol3 and completed_updates % hp["save_iter"] == 0:
             validate_protocol3_checkpoint(count_gate2_pass=True)
-            if gate2_passed:
+            if gate2_passed and not experimental_disable_gate2_early_stopping:
                 break
         elif not protocol3 and (batch % hp["save_iter"] == 0):
             # Get test loss

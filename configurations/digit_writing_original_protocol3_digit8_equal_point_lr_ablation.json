@@ -1,0 +1,68 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_digit8_equal_point_lr_ablation",
+  "variant": "digit8_medium_equal_point_lr_from6000_to7000",
+  "source": {
+    "protocol_config": "configurations/digit_writing_original_protocol3_gate2_scale2p50_ref100.json",
+    "case_label": "o3_digit8",
+    "completed_updates": 6000,
+    "repository_head": "792c4d3d20ae6ec0c5deef4f06bd41a0859730ba",
+    "checkpoint_sha256": "45373d9db856afa08652ed700081d23a375f5d772499e2ae56efc89423088c64",
+    "summary_sha256": "991385a6862af4ddff99101c8704fb07da31c239e1b5c6711e7b9d41fcaf0112",
+    "model_state_sha256": "de1ca623bb85088c8e2096888ff38821eaa4d79cb455b63c95d97544eb7301fe",
+    "overlay_csv_sha256": "98bf6aba92e9ac3697aca950a26dc1f6e9be369175394da5a78a75890eecc816",
+    "overlay_png_sha256": "015b63fcf616ffdce7ea1f26c92c6a293186eb5121ad02dd03e489e43a7966be"
+  },
+  "frozen_case": {
+    "digit": 8,
+    "direction_index": 0,
+    "delay_steps": 50,
+    "scale_multiplier": 2.5,
+    "selected_reference_steps": 100,
+    "movement_intervals": 200,
+    "movement_samples": 201,
+    "episode_steps": 301,
+    "trajectory_start": "top",
+    "initial_direction": "left_down",
+    "closed_target": true
+  },
+  "objective": {
+    "type": "phase_normalized_l1",
+    "stable_weight": 0.1,
+    "delay_weight": 0.1,
+    "movement_weight": 0.6,
+    "hold_weight": 0.2,
+    "movement_points_equal_weight": true,
+    "start_point_extra_weight": 0.0,
+    "endpoint_extra_weight": 0.0,
+    "closure_extra_weight": 0.0
+  },
+  "optimizer": {
+    "name": "Adam",
+    "source_learning_rate": 0.001,
+    "restore_optimizer_state": true,
+    "override_only_param_group_learning_rate": true
+  },
+  "arms": [
+    {"label": "digit8_medium_lr1e3", "learning_rate": 0.001},
+    {"label": "digit8_medium_lr3e4", "learning_rate": 0.0003},
+    {"label": "digit8_medium_lr1e4", "learning_rate": 0.0001}
+  ],
+  "training": {
+    "target_completed_updates": 7000,
+    "additional_updates": 1000,
+    "validation_interval": 100,
+    "batch_size": 8,
+    "fixed_target_no_early_stop": true
+  },
+  "decision": {
+    "automatic_winner_selection": false,
+    "automatic_further_continuation": false,
+    "automatic_reference_fallback": false,
+    "formal_full10_start": false,
+    "qualitative_overlay_review_required": true
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/digit8_equal_point_lr_from6000_to7000"
+  }
+}
