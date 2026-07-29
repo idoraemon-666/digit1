@@ -72,6 +72,10 @@ if [[ -n "$CPU_MAX" ]]; then
   fi
 fi
 
+# The review output hierarchy may not exist on a freshly provisioned card.
+# Create only its parent here so the pre-training test log can be captured;
+# `prepare` remains responsible for atomically creating RUN_ROOT itself.
+mkdir -p "$(dirname "$RUN_ROOT")"
 TEST_LOG="${RUN_ROOT}.tests.log"
 set +e
 (

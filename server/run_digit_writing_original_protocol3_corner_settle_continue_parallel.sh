@@ -85,6 +85,9 @@ for path in "$RUN_ROOT" "$ARCHIVE" "$ARCHIVE_HASH" "$TEST_LOG"; do
   fi
 done
 
+# A first continuation has no pre-existing `continuations` directory.  Create
+# only the parent so tee can record the mandatory tests before RUN_ROOT exists.
+mkdir -p "$(dirname "$RUN_ROOT")"
 set +e
 (
   cd "$REPO"
