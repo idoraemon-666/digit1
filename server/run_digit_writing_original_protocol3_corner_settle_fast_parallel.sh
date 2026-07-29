@@ -43,11 +43,12 @@ PY
 RUN_ROOT="$(realpath -m "$REPO/${CONFIG_VALUES[0]}")"
 ARCHIVE="${RUN_ROOT}.tar.gz"
 ARCHIVE_HASH="${ARCHIVE}.sha256"
+TEST_LOG="${RUN_ROOT}.tests.log"
 case "$RUN_ROOT" in
   "$REPO"/runs/digit_writing_original_protocol3_corner_settle_gate/scale2p50/ref50/review6000) ;;
   *) echo "ABORT: corner-settle output identity is invalid" >&2; exit 1 ;;
 esac
-for path in "$RUN_ROOT" "$ARCHIVE" "$ARCHIVE_HASH"; do
+for path in "$RUN_ROOT" "$ARCHIVE" "$ARCHIVE_HASH" "$TEST_LOG"; do
   if [[ -e "$path" ]]; then
     echo "ABORT: output already exists: $path" >&2
     exit 1
@@ -76,7 +77,6 @@ fi
 # Create only its parent here so the pre-training test log can be captured;
 # `prepare` remains responsible for atomically creating RUN_ROOT itself.
 mkdir -p "$(dirname "$RUN_ROOT")"
-TEST_LOG="${RUN_ROOT}.tests.log"
 set +e
 (
   cd "$REPO"
