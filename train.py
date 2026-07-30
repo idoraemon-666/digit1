@@ -910,7 +910,7 @@ def load_prev_training(model_path, model_file):
 
 
 
-def _apply_digit8_lr_ablation_optimizer_override(optimizer, checkpoint, hp):
+def _apply_protocol3_resume_learning_rate_override(optimizer, checkpoint, hp):
     learning_rate = float(hp["experimental_resume_learning_rate"])
     if not np.isfinite(learning_rate) or learning_rate <= 0.0:
         raise ValueError(
@@ -945,6 +945,12 @@ def _apply_digit8_lr_ablation_optimizer_override(optimizer, checkpoint, hp):
     return source_group_learning_rates
 
 
+def _apply_digit8_lr_ablation_optimizer_override(optimizer, checkpoint, hp):
+    return _apply_protocol3_resume_learning_rate_override(
+        optimizer, checkpoint, hp
+    )
+
+
 def train_subsets_base_model(
     model_path,
     model_file,
@@ -952,6 +958,7 @@ def train_subsets_base_model(
     env_dict=None,
     *,
     resume_checkpoint=None,
+    resume_best_checkpoint=None,
     target_completed_updates=None,
     manual_resume_authorized=False,
     expected_resume_repository_head=None,
@@ -1042,45 +1049,44 @@ def train_subsets_base_model(
         "passing": os.path.join(model_path, ".corner_ease_passing.pt"),
         "mean": os.path.join(model_path, ".corner_ease_mean.pt"),
     }
-    if corner_ease_selection and resume_checkpoint is not None:
-        raise ValueError("corner-ease overfit does not support continuation")
     experimental_resume_learning_rate = hp.get(
         "experimental_resume_learning_rate"
     )
     experimental_disable_gate2_early_stopping = bool(
         hp.get("experimental_disable_gate2_early_stopping", False)
     )
-    experimental_lr_arms = {
+    experimental_digit8_lr_arms = {
         "digit8_medium_lr1e3": 0.001,
         "digit8_medium_lr3e4": 0.0003,
         "digit8_medium_lr1e4": 0.0001,
     }
+    experimental_run_kind = hp.get("experimental_run_kind")
+    corner_ease_lr_continuation = (
+        experimental_run_kind
+        == "protocol3_corner_ease_lr_continuation"
+    )
     if (
         experimental_resume_learning_rate is not None
         or experimental_disable_gate2_early_stopping
     ) and not (
         protocol3
-        and gate2
+        and single_condition
         and resume_checkpoint is not None
         and manual_resume_authorized
         and expected_resume_repository_head is not None
     ):
         raise ValueError(
-            "experimental Gate 2 resume controls require an authorized "
+            "experimental Protocol3 resume controls require an authorized "
             "single-condition continuation"
         )
-    if (
-        experimental_resume_learning_rate is not None
-        or experimental_disable_gate2_early_stopping
-    ):
+    if experimental_run_kind == "protocol3_digit8_equal_point_lr_ablation":
         experimental_arm = hp.get("experimental_lr_ablation_arm")
         if (
             experimental_resume_learning_rate is None
-            or hp.get("experimental_run_kind")
-            != "protocol3_digit8_equal_point_lr_ablation"
-            or experimental_arm not in experimental_lr_arms
+            or not gate2
+            or experimental_arm not in experimental_digit8_lr_arms
             or float(experimental_resume_learning_rate)
-            != experimental_lr_arms[experimental_arm]
+            != experimental_digit8_lr_arms[experimental_arm]
             or float(hp.get("experimental_source_learning_rate", -1.0))
             != 0.001
             or not experimental_disable_gate2_early_stopping
@@ -1092,6 +1098,49 @@ def train_subsets_base_model(
             or next(iter(env_dict.values())).FIXED_DIGIT != 8
         ):
             raise ValueError("digit8 learning-rate ablation identity is invalid")
+    elif corner_ease_lr_continuation:
+        if experimental_resume_learning_rate is None:
+            raise ValueError(
+                "corner-ease learning-rate continuation requires a rate"
+            )
+        fixed_digit = next(iter(env_dict.values())).FIXED_DIGIT
+        resume_learning_rate = float(experimental_resume_learning_rate)
+        expected_arm = (
+            f"digit{fixed_digit}_lr1e3"
+            if resume_learning_rate == 0.001
+            else f"digit{fixed_digit}_lr3e4"
+        )
+        if (
+            resume_learning_rate not in (0.001, 0.0003)
+            or not corner_ease_selection
+            or int(fixed_digit) not in (0, 3, 4, 5, 6, 7)
+            or hp.get("experimental_lr_ablation_arm") != expected_arm
+            or float(hp.get("experimental_source_learning_rate", -1.0))
+            != 0.001
+            or hp.get("variant") != f"digit{fixed_digit}_corner_ease"
+            or hp.get("gate2_direction_index") != 0
+            or hp.get("gate2_delay_index") != PROTOCOL3_DELAYS.index(50)
+            or env_dict is None
+            or len(env_dict) != 1
+            or resume_best_checkpoint is None
+            or experimental_disable_gate2_early_stopping
+        ):
+            raise ValueError(
+                "corner-ease learning-rate continuation identity is invalid"
+            )
+    elif (
+        experimental_resume_learning_rate is not None
+        or experimental_disable_gate2_early_stopping
+    ):
+        raise ValueError("unknown experimental Protocol3 resume controls")
+    if resume_best_checkpoint is not None and not corner_ease_lr_continuation:
+        raise ValueError(
+            "a resume best checkpoint is only valid for corner-ease continuation"
+        )
+    if corner_ease_selection and resume_checkpoint is not None and not (
+        corner_ease_lr_continuation
+    ):
+        raise ValueError("corner-ease overfit does not support this continuation")
     if resume_checkpoint is not None:
         if not protocol3:
             raise ValueError("only protocol3 supports continuation resume")
@@ -1164,7 +1213,7 @@ def train_subsets_base_model(
         policy.load_state_dict(checkpoint["agent_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if experimental_resume_learning_rate is not None:
-            _apply_digit8_lr_ablation_optimizer_override(
+            _apply_protocol3_resume_learning_rate_override(
                 optimizer, checkpoint, hp
             )
         completed_updates = int(restore_state["completed_updates"])
@@ -1172,7 +1221,9 @@ def train_subsets_base_model(
             experimental_resume_learning_rate is not None
             and completed_updates != 6000
         ):
-            raise ValueError("digit8 learning-rate ablation must start at update 6000")
+            raise ValueError(
+                "experimental learning-rate continuation must start at update 6000"
+            )
         condition_counts = restore_state["condition_counts"]
         validation_history = list(restore_state["validation_history"])
         deterministic_sentinel_history = list(
@@ -1189,6 +1240,87 @@ def train_subsets_base_model(
             restore_state.get("gate2_consecutive_passes", 0)
         )
         restore_rng_state(checkpoint["rng_state"])
+        if corner_ease_lr_continuation:
+            from digit_writing.protocol3_corner_ease import (
+                reconstruct_corner_ease_selection_state,
+                select_validation_history,
+            )
+
+            saved_selection_state = restore_state.get("corner_ease_selection")
+            if not isinstance(saved_selection_state, dict):
+                raise ValueError(
+                    "corner-ease continuation selection state is incomplete"
+                )
+            rebuilt = reconstruct_corner_ease_selection_state(
+                validation_history
+            )
+            for key in (
+                "pass_streak",
+                "stable_best",
+                "passing_best",
+                "mean_best",
+                "stable_intervals",
+            ):
+                if saved_selection_state.get(key) != rebuilt[key]:
+                    raise ValueError(
+                        f"corner-ease continuation selection state differs: {key}"
+                    )
+            source_selection = select_validation_history(validation_history)
+            source_best_checkpoint = torch.load(
+                resume_best_checkpoint,
+                map_location=device,
+                weights_only=False,
+            )
+            source_best_state = validate_protocol3_resume_checkpoint(
+                source_best_checkpoint,
+                hp["protocol_config"],
+            )
+            if (
+                source_best_checkpoint.get("variant") != hp.get("variant")
+                or source_best_checkpoint.get("git_identity")
+                != checkpoint.get("git_identity")
+                or int(source_best_state["completed_updates"])
+                != int(source_selection["best_update"])
+            ):
+                raise ValueError(
+                    "corner-ease source best checkpoint identity differs"
+                )
+            selection_path = {
+                "STABLE_PASS": "stable",
+                "PASS_UNSTABLE": "passing",
+                "FAIL": "mean",
+            }[source_selection["status"]]
+            shutil.copy2(
+                resume_best_checkpoint,
+                corner_ease_temp_paths[selection_path],
+            )
+            if rebuilt["current_streak_best"] is not None:
+                current_best_update = int(
+                    rebuilt["current_streak_best"]["completed_updates"]
+                )
+                if current_best_update == completed_updates:
+                    current_source = resume_checkpoint
+                elif current_best_update == int(source_selection["best_update"]):
+                    current_source = resume_best_checkpoint
+                else:
+                    raise ValueError(
+                        "corner-ease trailing streak checkpoint is unavailable"
+                    )
+                shutil.copy2(
+                    current_source,
+                    corner_ease_temp_paths["current"],
+                )
+            corner_ease_pass_streak = int(rebuilt["pass_streak"])
+            corner_ease_current_streak_best = rebuilt[
+                "current_streak_best"
+            ]
+            corner_ease_current_interval_start = rebuilt[
+                "current_interval_start"
+            ]
+            corner_ease_stable_best = rebuilt["stable_best"]
+            corner_ease_passing_best = rebuilt["passing_best"]
+            corner_ease_mean_best = rebuilt["mean_best"]
+            corner_ease_stable_intervals = list(rebuilt["stable_intervals"])
 
     stop_after_updates = int(
         target_completed_updates
@@ -1196,10 +1328,14 @@ def train_subsets_base_model(
         else hp.get("stop_after_updates", hp["epochs"])
     )
     if (
-        experimental_resume_learning_rate is not None
+        experimental_run_kind == "protocol3_digit8_equal_point_lr_ablation"
         and stop_after_updates != 7000
     ):
         raise ValueError("digit8 learning-rate ablation must stop at update 7000")
+    if corner_ease_lr_continuation and stop_after_updates != 8000:
+        raise ValueError(
+            "corner-ease learning-rate continuation must stop at update 8000"
+        )
     if stop_after_updates > int(hp["epochs"]):
         single_condition_extension = bool(
             protocol3

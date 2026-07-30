@@ -120,6 +120,90 @@ def select_validation_history(
     }
 
 
+def reconstruct_corner_ease_selection_state(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Rebuild the online corner-ease selector state from frozen history."""
+
+    if not rows:
+        raise ValueError("corner-ease validation history must not be empty")
+    pass_streak = 0
+    current_streak_best = None
+    current_interval_start = None
+    stable_best = None
+    passing_best = None
+    mean_best = None
+    stable_intervals = []
+    for row in rows:
+        selection_row = {
+            "completed_updates": int(row["completed_updates"]),
+            "normalized_mean_error": float(row["normalized_mean_error"]),
+            "normalized_endpoint_error": float(
+                row["normalized_endpoint_error"]
+            ),
+            "path_length_ratio": float(row["path_length_ratio"]),
+        }
+        if not all(
+            math.isfinite(selection_row[name])
+            for name in (
+                "normalized_mean_error",
+                "normalized_endpoint_error",
+                "path_length_ratio",
+            )
+        ):
+            raise ValueError("corner-ease validation history contains NaN or Inf")
+        mean_error = selection_row["normalized_mean_error"]
+        if mean_best is None or mean_error < mean_best["normalized_mean_error"]:
+            mean_best = dict(selection_row)
+        passed = bool(
+            mean_error <= 0.08
+            and selection_row["normalized_endpoint_error"] <= 0.05
+            and 0.85 <= selection_row["path_length_ratio"] <= 1.15
+        )
+        if not passed:
+            pass_streak = 0
+            current_streak_best = None
+            current_interval_start = None
+            continue
+        if passing_best is None or mean_error < passing_best["normalized_mean_error"]:
+            passing_best = dict(selection_row)
+        if pass_streak == 0:
+            current_interval_start = selection_row["completed_updates"]
+            current_streak_best = None
+        pass_streak += 1
+        if (
+            current_streak_best is None
+            or mean_error < current_streak_best["normalized_mean_error"]
+        ):
+            current_streak_best = dict(selection_row)
+        if pass_streak == 3:
+            stable_intervals.append(
+                {
+                    "start_update": current_interval_start,
+                    "end_update": selection_row["completed_updates"],
+                }
+            )
+        elif pass_streak > 3:
+            stable_intervals[-1]["end_update"] = selection_row[
+                "completed_updates"
+            ]
+        if pass_streak >= 3 and (
+            stable_best is None
+            or current_streak_best["normalized_mean_error"]
+            < stable_best["normalized_mean_error"]
+        ):
+            stable_best = dict(current_streak_best)
+    return {
+        "pass_streak": pass_streak,
+        "current_streak_best": current_streak_best,
+        "current_interval_start": current_interval_start,
+        "stable_best": stable_best,
+        "passing_best": passing_best,
+        "mean_best": mean_best,
+        "stable_intervals": stable_intervals,
+    }
+
+
 def _read_json(path: str | Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
         value = json.load(handle)

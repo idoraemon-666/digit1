@@ -1,0 +1,90 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_corner_ease_lr_continuation",
+  "variant": "six_digit_lr_control_from6000_to8000",
+  "source": {
+    "protocol_config": "configurations/digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v3.json",
+    "output_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/single_digit_overfit",
+    "evidence_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/single_digit_overfit_server_evidence",
+    "repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925",
+    "completed_updates": 6000,
+    "cases": [
+      {
+        "label": "digit0_corner_ease",
+        "digit": 0,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "629e353d161281265e40d221cf5bcd30d2906db05b459f2a7be2b62efe81cff7",
+        "final_checkpoint_sha256": "fd4c42c7a5ee546ccdc65615df2648379fdc1b36f36dbe0d918de5ed476ae908",
+        "run_summary_sha256": "0df65f909782fab0fcd8a1fbcda90511720a451ce9112a18aebbd63070efc65a"
+      },
+      {
+        "label": "digit3_corner_ease",
+        "digit": 3,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "1d1c9c279b1dcb1b9333815b38c7df3cc2d4e13a91d265c64e10a34f5beefd9f",
+        "final_checkpoint_sha256": "06d111a9ad7913689f21ddf6ff074df71ae215d97adf67560abf76cadd621f9f",
+        "run_summary_sha256": "7f33febedd4a669bfeabc531c1470709f7bb9498798efeff85be78fa98ae22ce"
+      },
+      {
+        "label": "digit4_corner_ease",
+        "digit": 4,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "f05fb2d20325172edb97e217430154b1a041f693fbbd5d7160884ba4c24aa4e3",
+        "final_checkpoint_sha256": "8f168bf03bef583a2eeda9dbd1e913c45b4e8a4c01952d64b545f713685146f4",
+        "run_summary_sha256": "7c689cc88b1290846ce418abff7e78f40cb00af61bffc167caf2b9465c6e34f3"
+      },
+      {
+        "label": "digit5_corner_ease",
+        "digit": 5,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "f7105728786b24aab2ad20fcf8d0f8f28b245eebdd7373626574ba07a8a25271",
+        "final_checkpoint_sha256": "f7355af0c8be3c3502cb7e7da1098ca84ca549f82ef7815035a4a3b08de88614",
+        "run_summary_sha256": "20287ebdf2bc3a83ca5d28a40e17c7abae2df6773aec65b2b0bf67db973069ac"
+      },
+      {
+        "label": "digit6_corner_ease",
+        "digit": 6,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "aa96bad7c7a666043fffbd4f5416e78b1474edb5d0f13638d55436d78c3da647",
+        "final_checkpoint_sha256": "670104ff570f623d34892a3a06427aa5e25aa9433d3d08e3bdbb7f3b7a4e1a62",
+        "run_summary_sha256": "ecaadfec5adb9673f9bc7bada81b4fc57f84fd5c3e510f3efd1d44135640f957"
+      },
+      {
+        "label": "digit7_corner_ease",
+        "digit": 7,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "e39e524d6ddab9397ac241076ed94822ec3df95b22ed1ccaf6b2077ad9df1bca",
+        "final_checkpoint_sha256": "5fc3c9bf53a2833624bbf7b0e7eba4427993d1cbc627bb784783c463b5824fea",
+        "run_summary_sha256": "4b2bfe8e3996ad2264d140752d2c5139b7f33415fc83546e3cba6f465cadb024"
+      }
+    ]
+  },
+  "optimizer": {
+    "name": "Adam",
+    "source_learning_rate": 0.001,
+    "restore_optimizer_state": true,
+    "override_only_param_group_learning_rate": true
+  },
+  "arms": [
+    {"label": "lr1e3", "learning_rate": 0.001},
+    {"label": "lr3e4", "learning_rate": 0.0003}
+  ],
+  "training": {
+    "target_completed_updates": 8000,
+    "additional_updates": 2000,
+    "validation_interval": 100,
+    "batch_size": 8,
+    "fixed_target_no_early_stop": true
+  },
+  "decision": {
+    "automatic_winner_selection": false,
+    "automatic_further_continuation": false,
+    "automatic_second_seed": false,
+    "digit8_included": false,
+    "formal_full10_start": false,
+    "qualitative_overlay_review_required": true
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/lr_continuation_from6000_to8000"
+  }
+}
