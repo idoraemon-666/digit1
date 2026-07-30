@@ -87,14 +87,14 @@ ac0c4f589eae37bbde63968912925de99232e306
 建议 timing mode 名称：
 
 ```text
-fixed_segment_timing_corner_ease_v2
+fixed_segment_timing_corner_ease_v3
 ```
 
 建议输出根目录：
 
 ```text
 runs/digit_writing_original_protocol3/
-scale2p50/ref100/corner_ease_v2/single_digit_overfit/
+scale2p50/ref100/corner_ease_v3/single_digit_overfit/
 ```
 
 每个数字独立目录：
@@ -113,7 +113,7 @@ digit9/seed42/
 protocol3
 scale2p50
 ref100
-corner-ease-v2
+corner-ease-v3
 digit
 direction0
 delay50
@@ -265,22 +265,26 @@ RESAMPLED_WINDOW_INTERVALS = 15
 
 不允许根据数字或转向角单独调整窗口和额外步数。
 
-## 5.3 v2 固定离散时间映射
+## 5.3 v3 minimax 固定离散时间映射
 
 v1 五次映射已在服务器通过 92 项代码测试，但在训练前运动学硬门禁中使以下局部
 `p95 acceleration` 上升：digit 4 boundary 0 为 4.98%，digit 5 两个 boundary
 分别为 23.39% 和 22.70%，digit 7 boundary 0 为 19.29%。所有训练均未启动。
 
-经用户明确授权，v2 只替换时间步长分配，不改变第 5.2 节空间窗口、总 intervals、
-尖角阈值、几何、hash、训练条件或运动学门禁。不得把 v1 结果伪装成 v2 结果。
+v2 固定有理数映射随后在服务器运行 93 项测试，其中只有运动学硬门禁的 digit 5
+两个边界失败：boundary 0 为 `1.71869193608 > 1.70354900845`（高 0.8889%），
+boundary 1 为 `2.56713751180 > 2.55800743737`（高 0.3569%）。训练仍未启动。
+
+经用户明确授权，v3 只替换时间步长分配，不改变第 5.2 节空间窗口、总 intervals、
+尖角阈值、几何、hash、训练条件或运动学门禁。不得把 v1 或 v2 结果伪装成 v3
+结果。
 
 终点减速窗口的 15 个正弧长步长，以一个基础 interval 为单位，固定为：
 
 ```text
-denominator = 1380
+denominator = 20
 numerators  = [
-  1179, 1179, 1179, 1179, 1179, 1179, 1179, 1179, 1179,
-   994,  809,  624,  439,  254,   69
+  20, 20, 20, 20, 20, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1
 ]
 ```
 
@@ -289,8 +293,14 @@ numerators  = [
 ```text
 sum(step_weights) = 10
 step_weights > 0
-last_step / baseline_step = 69 / 1380 = 0.05
+step_weights 单调不增
+last_step / baseline_step = 1 / 20 = 0.05
+max(abs(diff([1.0] + step_weights))) = 0.10
 ```
+
+在上述冻结约束下，`0.10` 是最大相邻步长变化的最小可达值：从末步 0.05
+反向按每步最多 0.10 增长并在 1.0 截断时，15 步总和最多恰为 10；任何更小
+上限都会使总和小于 10。v3 采用达到该下界的固定表，不进行参数扫描。
 
 起点加速窗口严格使用上述序列的时间反向。累计弧长比例由步长序列直接累加并除以
 10 得到，必须严格单调。不得按数字、转向角或服务器结果调整此表。
@@ -830,7 +840,7 @@ digit_writing/corner_time_reparameterization.py
 其中只包含：
 
 ```text
-corner_ease_step_weights_v2
+corner_ease_step_weights_v3
 detect_sharp_boundaries
 resample_segment_with_corner_easing
 ```
@@ -839,7 +849,7 @@ resample_segment_with_corner_easing
 
 ```text
 fixed_segment_timing
-fixed_segment_timing_corner_ease_v2
+fixed_segment_timing_corner_ease_v3
 ```
 
 默认模式和所有旧配置行为必须保持不变。
@@ -852,7 +862,7 @@ fixed_segment_timing_corner_ease_v2
 
 训练前至少通过：
 
-1. v2 固定分子、分母、严格正步长、总弧长和末步 0.05 比例；
+1. v3 固定分子、分母、严格正步长、总弧长、末步 0.05 和 minimax 0.10；
 2. 减速与时间反向加速映射严格单调；
 3. `corner_ease` 关闭时目标与 baseline 逐点一致；
 4. 非尖角数字目标逐点不变；

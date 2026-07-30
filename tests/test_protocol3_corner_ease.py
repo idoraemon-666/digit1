@@ -9,10 +9,10 @@ from digit_writing.corner_time_reparameterization import (
     CORNER_EASE_TIMING,
     EXTRA_INTERVALS_PER_SIDE,
     RESAMPLED_WINDOW_INTERVALS,
-    V2_STEP_WEIGHT_DENOMINATOR,
-    V2_STEP_WEIGHT_NUMERATORS,
+    V3_STEP_WEIGHT_DENOMINATOR,
+    V3_STEP_WEIGHT_NUMERATORS,
     _corner_ease_fractions,
-    corner_ease_step_weights_v2,
+    corner_ease_step_weights_v3,
 )
 from digit_writing.geometry import (
     _identified_json_hash,
@@ -38,10 +38,10 @@ BASE_GEOMETRY = (
 )
 EASE_GEOMETRY = (
     CONFIG_ROOT
-    / "digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v2.json"
+    / "digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v3.json"
 )
 EXPERIMENT_CONFIG = (
-    CONFIG_ROOT / "digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v2.json"
+    CONFIG_ROOT / "digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v3.json"
 )
 
 
@@ -51,19 +51,22 @@ class Protocol3CornerEaseTests(unittest.TestCase):
         cls.baseline_config = load_geometry_config(BASE_GEOMETRY)
         cls.ease_config = load_geometry_config(EASE_GEOMETRY)
 
-    def test_v2_step_table_is_frozen_positive_and_exact(self):
-        weights = corner_ease_step_weights_v2()
-        self.assertEqual(V2_STEP_WEIGHT_DENOMINATOR, 1380)
+    def test_v3_step_table_is_frozen_positive_and_exact(self):
+        weights = corner_ease_step_weights_v3()
+        self.assertEqual(V3_STEP_WEIGHT_DENOMINATOR, 20)
         self.assertEqual(
-            V2_STEP_WEIGHT_NUMERATORS,
-            (1179,) * 9 + (994, 809, 624, 439, 254, 69),
+            V3_STEP_WEIGHT_NUMERATORS,
+            (20,) * 5 + (19, 17, 15, 13, 11, 9, 7, 5, 3, 1),
         )
         self.assertEqual(len(weights), RESAMPLED_WINDOW_INTERVALS)
         self.assertTrue(np.all(weights > 0.0))
+        self.assertTrue(np.all(np.diff(weights) <= 0.0))
         self.assertAlmostEqual(float(weights.sum()), BASE_WINDOW_INTERVALS)
         self.assertAlmostEqual(float(weights[-1]), 0.05)
+        changes = np.abs(np.diff(np.concatenate(([1.0], weights))))
+        self.assertAlmostEqual(float(changes.max()), 0.10)
 
-    def test_v2_maps_are_strictly_monotone_and_time_reversed(self):
+    def test_v3_maps_are_strictly_monotone_and_time_reversed(self):
         to_stop = _corner_ease_fractions(
             60, ease_start=False, ease_end=True
         )
@@ -252,7 +255,7 @@ class Protocol3CornerEaseTests(unittest.TestCase):
                 self.assertLessEqual(incoming / regular, 0.10)
                 self.assertLessEqual(outgoing / regular, 0.10)
 
-    def test_v2_local_kinematic_gate(self):
+    def test_v3_local_kinematic_gate(self):
         for digit in (2, 3, 4, 5, 7):
             baseline = build_digit_trajectory(digit, self.baseline_config, 100)
             candidate = build_digit_trajectory(digit, self.ease_config, 100)
@@ -306,7 +309,7 @@ class Protocol3CornerEaseTests(unittest.TestCase):
         script = (
             ROOT
             / "server"
-            / "run_digit_writing_original_protocol3_ten_digit_corner_ease_v2_parallel.sh"
+            / "run_digit_writing_original_protocol3_ten_digit_corner_ease_v3_parallel.sh"
         ).read_text(encoding="utf-8")
         self.assertIn("nproc >= 10", script)
         self.assertIn(

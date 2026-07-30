@@ -3,7 +3,7 @@
   "geometry_source": "digit_writing/digit_geometry_final.py",
   "global_scale_m_per_unit": 0.16025641025641027,
   "scale_multiplier": 2.5,
-  "timing_mode": "fixed_segment_timing_corner_ease_v2",
+  "timing_mode": "fixed_segment_timing_corner_ease_v3",
   "selected_reference_steps": 100,
   "timing": {
     "dt_seconds": 0.01,

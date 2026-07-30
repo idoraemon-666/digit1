@@ -1,15 +1,15 @@
 {
   "protocol": "digit_writing_original_protocol3",
   "run_kind": "protocol3_corner_ease_overfit",
-  "variant": "ten_digit_corner_ease_v2_overfit6000",
+  "variant": "ten_digit_corner_ease_v3_overfit6000",
   "seed": 42,
   "validation_seed": 1042,
   "device": "cpu",
-  "geometry_config": "configurations/digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v2.json",
+  "geometry_config": "configurations/digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v3.json",
   "source_gate2_config": "configurations/digit_writing_original_protocol3_gate2_scale2p50_ref100.json",
   "baseline_reference": "configurations/digit_writing_original_protocol3_medium_baseline_reference.json",
   "scale_multiplier": 2.5,
-  "timing_mode": "fixed_segment_timing_corner_ease_v2",
+  "timing_mode": "fixed_segment_timing_corner_ease_v3",
   "selected_reference_steps": 100,
   "condition_schedule": "protocol3_corner_ease_single_condition",
   "cases": [
@@ -53,13 +53,13 @@
     "simple_dynamics_weight": 0.001
   },
   "corner_ease": {
-    "mapping_version": "fixed_rational_step_table_v2",
+    "mapping_version": "fixed_minimax_rational_step_table_v3",
     "turn_angle_deg": 60.0,
     "base_window_intervals": 10,
     "extra_intervals_per_side": 5,
     "resampled_window_intervals": 15,
-    "step_weight_denominator": 1380,
-    "step_weight_numerators": [1179, 1179, 1179, 1179, 1179, 1179, 1179, 1179, 1179, 994, 809, 624, 439, 254, 69],
+    "step_weight_denominator": 20,
+    "step_weight_numerators": [20, 20, 20, 20, 20, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1],
     "incoming_speed_ratio_max": 0.1,
     "outgoing_speed_ratio_max": 0.1,
     "automatic_extension": false,
@@ -79,7 +79,7 @@
     "legacy_canonical_template_sha256_redefined": false
   },
   "output": {
-    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v2/single_digit_overfit",
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/single_digit_overfit",
     "best_checkpoint": "best_checkpoint.pt",
     "final_checkpoint": "final_checkpoint.pt"
   }

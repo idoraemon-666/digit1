@@ -9,17 +9,17 @@ from typing import Sequence
 import numpy as np
 
 
-CORNER_EASE_TIMING = "fixed_segment_timing_corner_ease_v2"
+CORNER_EASE_TIMING = "fixed_segment_timing_corner_ease_v3"
 TURN_THRESHOLD_DEG = 60.0
 BASE_WINDOW_INTERVALS = 10
 EXTRA_INTERVALS_PER_SIDE = 5
 RESAMPLED_WINDOW_INTERVALS = (
     BASE_WINDOW_INTERVALS + EXTRA_INTERVALS_PER_SIDE
 )
-V2_STEP_WEIGHT_DENOMINATOR = 1380
-V2_STEP_WEIGHT_NUMERATORS = (
-    (1179,) * 9
-    + (994, 809, 624, 439, 254, 69)
+V3_STEP_WEIGHT_DENOMINATOR = 20
+V3_STEP_WEIGHT_NUMERATORS = (
+    (20,) * 5
+    + (19, 17, 15, 13, 11, 9, 7, 5, 3, 1)
 )
 
 
@@ -32,27 +32,32 @@ class SharpBoundary:
     qualifies: bool
 
 
-def corner_ease_step_weights_v2() -> np.ndarray:
+def corner_ease_step_weights_v3() -> np.ndarray:
     """Frozen positive step lengths in units of one baseline interval."""
 
-    weights = np.asarray(V2_STEP_WEIGHT_NUMERATORS, dtype=np.float64)
-    weights /= V2_STEP_WEIGHT_DENOMINATOR
+    weights = np.asarray(V3_STEP_WEIGHT_NUMERATORS, dtype=np.float64)
+    weights /= V3_STEP_WEIGHT_DENOMINATOR
     if len(weights) != RESAMPLED_WINDOW_INTERVALS:
-        raise RuntimeError("corner-ease v2 step table has the wrong length")
+        raise RuntimeError("corner-ease v3 step table has the wrong length")
     if not math.isclose(
         float(weights.sum()),
         float(BASE_WINDOW_INTERVALS),
         rel_tol=0.0,
         abs_tol=1e-14,
     ):
-        raise RuntimeError("corner-ease v2 step table has the wrong arc length")
+        raise RuntimeError("corner-ease v3 step table has the wrong arc length")
     if np.any(weights <= 0.0):
-        raise RuntimeError("corner-ease v2 step table must be strictly positive")
+        raise RuntimeError("corner-ease v3 step table must be strictly positive")
+    if np.any(np.diff(weights) > 0.0):
+        raise RuntimeError("corner-ease v3 step table must be non-increasing")
+    changes = np.abs(np.diff(np.concatenate(([1.0], weights))))
+    if not math.isclose(float(changes.max()), 0.10, rel_tol=0.0, abs_tol=1e-14):
+        raise RuntimeError("corner-ease v3 minimax step change must equal 0.10")
     return weights
 
 
-def _window_fractions_to_stop_v2() -> np.ndarray:
-    weights = corner_ease_step_weights_v2()
+def _window_fractions_to_stop_v3() -> np.ndarray:
+    weights = corner_ease_step_weights_v3()
     fractions = np.concatenate(([0.0], np.cumsum(weights)))
     fractions /= BASE_WINDOW_INTERVALS
     fractions[0] = 0.0
@@ -163,7 +168,7 @@ def _corner_ease_fractions(
     end_ratio = 1.0 - start_ratio
     parts: list[np.ndarray] = []
 
-    window_to_stop = _window_fractions_to_stop_v2()
+    window_to_stop = _window_fractions_to_stop_v3()
     window_from_stop = 1.0 - window_to_stop[::-1]
 
     if ease_start:

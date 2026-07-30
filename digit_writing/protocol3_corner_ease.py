@@ -17,8 +17,8 @@ from digit_writing.corner_time_reparameterization import (
     EXTRA_INTERVALS_PER_SIDE,
     RESAMPLED_WINDOW_INTERVALS,
     TURN_THRESHOLD_DEG,
-    V2_STEP_WEIGHT_DENOMINATOR,
-    V2_STEP_WEIGHT_NUMERATORS,
+    V3_STEP_WEIGHT_DENOMINATOR,
+    V3_STEP_WEIGHT_NUMERATORS,
 )
 from digit_writing.digit_geometry_final import build_digit_segments_units
 from digit_writing.final_protocol_audit import _json_safe
@@ -179,7 +179,7 @@ def _validate_config(
         raise ValueError("corner easing requires Protocol3")
     if config.get("run_kind") != "protocol3_corner_ease_overfit":
         raise ValueError("corner-ease run_kind is invalid")
-    if config.get("variant") != "ten_digit_corner_ease_v2_overfit6000":
+    if config.get("variant") != "ten_digit_corner_ease_v3_overfit6000":
         raise ValueError("corner-ease variant is not frozen")
     if config.get("device") != "cpu":
         raise ValueError("corner-ease overfit is CPU-only")
@@ -242,13 +242,13 @@ def _validate_config(
     if actual_cases != expected_cases:
         raise ValueError("corner-ease cases differ from the frozen ten digits")
     if config.get("corner_ease") != {
-        "mapping_version": "fixed_rational_step_table_v2",
+        "mapping_version": "fixed_minimax_rational_step_table_v3",
         "turn_angle_deg": TURN_THRESHOLD_DEG,
         "base_window_intervals": BASE_WINDOW_INTERVALS,
         "extra_intervals_per_side": EXTRA_INTERVALS_PER_SIDE,
         "resampled_window_intervals": RESAMPLED_WINDOW_INTERVALS,
-        "step_weight_denominator": V2_STEP_WEIGHT_DENOMINATOR,
-        "step_weight_numerators": list(V2_STEP_WEIGHT_NUMERATORS),
+        "step_weight_denominator": V3_STEP_WEIGHT_DENOMINATOR,
+        "step_weight_numerators": list(V3_STEP_WEIGHT_NUMERATORS),
         "incoming_speed_ratio_max": 0.1,
         "outgoing_speed_ratio_max": 0.1,
         "automatic_extension": False,
@@ -276,7 +276,7 @@ def _validate_config(
         raise ValueError("corner-ease final checkpoint name differs")
     if output.get("directory") != (
         "runs/digit_writing_original_protocol3/scale2p50/ref100/"
-        "corner_ease_v2/single_digit_overfit"
+        "corner_ease_v3/single_digit_overfit"
     ):
         raise ValueError("corner-ease output namespace differs")
 
