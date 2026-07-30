@@ -301,11 +301,17 @@ def _sample_corner_ease_digit(
     for index, (segment, dense_m, intervals) in enumerate(
         zip(segments, dense_segments_m, base_intervals)
     ):
-        sampled = resample_segment_with_corner_easing(
-            dense_m,
-            intervals,
-            ease_start=index in ease_at_start,
-            ease_end=index in ease_at_end,
+        ease_start = index in ease_at_start
+        ease_end = index in ease_at_end
+        sampled = (
+            resample_segment_with_corner_easing(
+                dense_m,
+                intervals,
+                ease_start=ease_start,
+                ease_end=ease_end,
+            )
+            if ease_start or ease_end
+            else baseline_samples[index]
         )
         actual_intervals = len(sampled) - 1
         length_m = arc_length(dense_m)
@@ -323,8 +329,8 @@ def _sample_corner_ease_digit(
                 "base_intervals": intervals,
                 "intervals": actual_intervals,
                 "samples": actual_intervals + 1,
-                "ease_at_start": index in ease_at_start,
-                "ease_at_end": index in ease_at_end,
+                "ease_at_start": ease_start,
+                "ease_at_end": ease_end,
                 "actual_mean_speed_m_s": (
                     length_m / (actual_intervals * dt_seconds)
                 ),
