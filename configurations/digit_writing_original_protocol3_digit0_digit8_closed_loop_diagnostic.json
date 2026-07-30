@@ -1,0 +1,136 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_digit0_digit8_closed_loop_diagnostic",
+  "variant": "digit0_digit8_joint_zero_step_v1",
+  "source": {
+    "protocol_config": "configurations/digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v3.json",
+    "run_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/single_digit_overfit",
+    "evidence_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/single_digit_overfit_server_evidence",
+    "repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
+  },
+  "continuation": {
+    "protocol_config": "configurations/digit_writing_original_protocol3_corner_ease_lr_continuation_6000_to8000.json",
+    "run_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/lr_continuation_from6000_to8000",
+    "evidence_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/lr_continuation_from6000_to8000_server_evidence",
+    "repository_head": "76349d51222eed62bdb26d78d251b7d57760f2e8"
+  },
+  "mrnntorch_head": "ac0c4f589eae37bbde63968912925de99232e306",
+  "checkpoints": [
+    {
+      "label": "d0_source_best4800",
+      "digit": 0,
+      "origin": "source",
+      "checkpoint": "digit0/seed42/best_checkpoint.pt",
+      "checkpoint_sha256": "629e353d161281265e40d221cf5bcd30d2906db05b459f2a7be2b62efe81cff7",
+      "run_summary": "digit0/seed42/run_summary.json",
+      "run_summary_sha256": "0df65f909782fab0fcd8a1fbcda90511720a451ce9112a18aebbd63070efc65a",
+      "expected_variant": "digit0_corner_ease",
+      "expected_update": 4800,
+      "expected_repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
+    },
+    {
+      "label": "d0_source_final6000",
+      "digit": 0,
+      "origin": "source",
+      "checkpoint": "digit0/seed42/final_checkpoint.pt",
+      "checkpoint_sha256": "fd4c42c7a5ee546ccdc65615df2648379fdc1b36f36dbe0d918de5ed476ae908",
+      "run_summary": "digit0/seed42/run_summary.json",
+      "run_summary_sha256": "0df65f909782fab0fcd8a1fbcda90511720a451ce9112a18aebbd63070efc65a",
+      "expected_variant": "digit0_corner_ease",
+      "expected_update": 6000,
+      "expected_repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
+    },
+    {
+      "label": "d0_lr1e3_final8000",
+      "digit": 0,
+      "origin": "continuation",
+      "checkpoint": "digit0/lr1e3/final_checkpoint.pt",
+      "checkpoint_sha256": "f075309b342c1ecd88c2fa65131ab03e029144dce24712fdf8f2fd505a6bdffc",
+      "run_summary": "digit0/lr1e3/run_summary.json",
+      "run_summary_sha256": "136dfb8e8958f85d42b6bc5d3f0174de3c1806d1fa0d262d773487cd7c54008b",
+      "expected_variant": "digit0_corner_ease",
+      "expected_update": 8000,
+      "expected_repository_head": "76349d51222eed62bdb26d78d251b7d57760f2e8"
+    },
+    {
+      "label": "d0_lr3e4_final8000",
+      "digit": 0,
+      "origin": "continuation",
+      "checkpoint": "digit0/lr3e4/final_checkpoint.pt",
+      "checkpoint_sha256": "3ec9099d25519add5bad3077b3f10c77c45f43ca4dc2052e0b0a427068823808",
+      "run_summary": "digit0/lr3e4/run_summary.json",
+      "run_summary_sha256": "6bfde34728b35757363860dc6762bd15c1536b92b6306a387a1626705145bf50",
+      "expected_variant": "digit0_corner_ease",
+      "expected_update": 8000,
+      "expected_repository_head": "76349d51222eed62bdb26d78d251b7d57760f2e8"
+    },
+    {
+      "label": "d8_source_best5800",
+      "digit": 8,
+      "origin": "source",
+      "checkpoint": "digit8/seed42/best_checkpoint.pt",
+      "checkpoint_sha256": "f70e0ba8e8585414f499f8ae2cc54e9061923983ea444ca62117e5faa5822a39",
+      "run_summary": "digit8/seed42/run_summary.json",
+      "run_summary_sha256": "15df42d78db01d52a802f7dcf10c6a8661c342d04c6ade5e30e32fe61817a5b1",
+      "expected_variant": "digit8_corner_ease",
+      "expected_update": 5800,
+      "expected_repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
+    },
+    {
+      "label": "d8_source_final6000",
+      "digit": 8,
+      "origin": "source",
+      "checkpoint": "digit8/seed42/final_checkpoint.pt",
+      "checkpoint_sha256": "2812c1c336c14d8cb58bb02638592499d0bc018fb6628287d73e10a5dfa445ce",
+      "run_summary": "digit8/seed42/run_summary.json",
+      "run_summary_sha256": "15df42d78db01d52a802f7dcf10c6a8661c342d04c6ade5e30e32fe61817a5b1",
+      "expected_variant": "digit8_corner_ease",
+      "expected_update": 6000,
+      "expected_repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
+    },
+    {
+      "label": "d9_positive_control_best4800",
+      "digit": 9,
+      "origin": "source",
+      "checkpoint": "digit9/seed42/best_checkpoint.pt",
+      "checkpoint_sha256": "4ad0674a167077a6a2935e6143bec9f723e6d9e07335e4a31edae5f2ed384bb9",
+      "run_summary": "digit9/seed42/run_summary.json",
+      "run_summary_sha256": "8957fee9d878aa2d8099f953aa782b4102db64b726aa4e2a244cfed467602cfb",
+      "expected_variant": "digit9_corner_ease",
+      "expected_update": 4800,
+      "expected_repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
+    }
+  ],
+  "audit": {
+    "testing": false,
+    "batch_size": 8,
+    "direction_index": 0,
+    "speed_condition": 0,
+    "delay_steps": 50,
+    "delay_index": 1,
+    "validation_seed": 1042,
+    "network_noise": false,
+    "deterministic_observations": true,
+    "phase_alignment_band_steps": 25,
+    "phase_alignment_step_increments": [0, 1, 2],
+    "closure_tolerance_bbox_fraction": 0.05,
+    "late_movement_fraction": 0.8,
+    "crossing_window_steps": 25,
+    "crossing_outgoing_steps": 10,
+    "gradient_epsilon": 1e-12,
+    "optimizer_steps": 0
+  },
+  "decision": {
+    "automatic_root_cause_selection": false,
+    "automatic_stage_b_start": false,
+    "automatic_training": false,
+    "automatic_geometry_change": false,
+    "automatic_loss_change": false,
+    "automatic_second_seed": false,
+    "formal_full10_start": false,
+    "qualitative_review_required": true
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/closed_loop_digit0_digit8_diagnostic"
+  }
+}
