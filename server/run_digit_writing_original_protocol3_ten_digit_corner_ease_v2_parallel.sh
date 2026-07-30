@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
-  echo "Usage: bash server/run_digit_writing_original_protocol3_ten_digit_corner_ease_parallel.sh REPO CONFIG EXPECTED_HEAD" >&2
+  echo "Usage: bash server/run_digit_writing_original_protocol3_ten_digit_corner_ease_v2_parallel.sh REPO CONFIG EXPECTED_HEAD" >&2
   exit 2
 fi
 
@@ -22,7 +22,7 @@ test -z "$(git -C "$REPO" status --short)"
 test -z "$(git -C "$REPO/mRNNTorch" status --short)"
 test "$(cat /root/autodl-tmp/conda/envs/motor-compat-cpu/.compatibility_environment_complete)" = "device=cpu"
 case "$CONFIG" in
-  "$REPO"/configurations/digit_writing_original_protocol3_ten_digit_corner_ease_overfit.json) ;;
+  "$REPO"/configurations/digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v2.json) ;;
   *) echo "ABORT: config is not the checked-in corner-ease config" >&2; exit 1 ;;
 esac
 
@@ -30,8 +30,8 @@ readarray -t CONFIG_VALUES < <("$PYTHON" - "$CONFIG" <<'PY'
 import json
 import sys
 config = json.load(open(sys.argv[1], encoding="utf-8"))
-assert config["variant"] == "ten_digit_corner_ease_v1_overfit6000"
-assert config["timing_mode"] == "fixed_segment_timing_corner_ease_v1"
+assert config["variant"] == "ten_digit_corner_ease_v2_overfit6000"
+assert config["timing_mode"] == "fixed_segment_timing_corner_ease_v2"
 assert config["selected_reference_steps"] == 100
 assert config["training"] == {
     "batch_size": 8,
@@ -52,7 +52,7 @@ EVIDENCE_ROOT="${RUN_ROOT}_server_evidence"
 ARCHIVE="${RUN_ROOT}.tar.gz"
 ARCHIVE_HASH="${ARCHIVE}.sha256"
 case "$RUN_ROOT" in
-  "$REPO"/runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v1/single_digit_overfit) ;;
+  "$REPO"/runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v2/single_digit_overfit) ;;
   *) echo "ABORT: corner-ease output identity is invalid" >&2; exit 1 ;;
 esac
 for path in "$RUN_ROOT" "$EVIDENCE_ROOT" "$ARCHIVE" "$ARCHIVE_HASH"; do
@@ -62,7 +62,7 @@ for path in "$RUN_ROOT" "$EVIDENCE_ROOT" "$ARCHIVE" "$ARCHIVE_HASH"; do
   fi
 done
 
-AVAILABLE_CPUS="$(nproc)"
+AVAILABLE_CPUS="$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)"
 if (( AVAILABLE_CPUS < 10 )); then
   echo "ABORT: ten-way parallel execution requires nproc >= 10" >&2
   exit 1

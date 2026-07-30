@@ -9,12 +9,17 @@ from typing import Sequence
 import numpy as np
 
 
-CORNER_EASE_TIMING = "fixed_segment_timing_corner_ease_v1"
+CORNER_EASE_TIMING = "fixed_segment_timing_corner_ease_v2"
 TURN_THRESHOLD_DEG = 60.0
 BASE_WINDOW_INTERVALS = 10
 EXTRA_INTERVALS_PER_SIDE = 5
 RESAMPLED_WINDOW_INTERVALS = (
     BASE_WINDOW_INTERVALS + EXTRA_INTERVALS_PER_SIDE
+)
+V2_STEP_WEIGHT_DENOMINATOR = 1380
+V2_STEP_WEIGHT_NUMERATORS = (
+    (1179,) * 9
+    + (994, 809, 624, 439, 254, 69)
 )
 
 
@@ -27,22 +32,32 @@ class SharpBoundary:
     qualifies: bool
 
 
-def ease_to_stop(z):
-    """Monotone quintic with unit initial slope and zero terminal velocity."""
+def corner_ease_step_weights_v2() -> np.ndarray:
+    """Frozen positive step lengths in units of one baseline interval."""
 
-    value = np.asarray(z, dtype=np.float64)
-    if np.any((value < 0.0) | (value > 1.0)):
-        raise ValueError("ease parameter must lie in [0, 1]")
-    return value + 4.0 * value**3 - 7.0 * value**4 + 3.0 * value**5
+    weights = np.asarray(V2_STEP_WEIGHT_NUMERATORS, dtype=np.float64)
+    weights /= V2_STEP_WEIGHT_DENOMINATOR
+    if len(weights) != RESAMPLED_WINDOW_INTERVALS:
+        raise RuntimeError("corner-ease v2 step table has the wrong length")
+    if not math.isclose(
+        float(weights.sum()),
+        float(BASE_WINDOW_INTERVALS),
+        rel_tol=0.0,
+        abs_tol=1e-14,
+    ):
+        raise RuntimeError("corner-ease v2 step table has the wrong arc length")
+    if np.any(weights <= 0.0):
+        raise RuntimeError("corner-ease v2 step table must be strictly positive")
+    return weights
 
 
-def ease_from_stop(z):
-    """Time reversal of :func:`ease_to_stop`."""
-
-    value = np.asarray(z, dtype=np.float64)
-    if np.any((value < 0.0) | (value > 1.0)):
-        raise ValueError("ease parameter must lie in [0, 1]")
-    return 1.0 - ease_to_stop(1.0 - value)
+def _window_fractions_to_stop_v2() -> np.ndarray:
+    weights = corner_ease_step_weights_v2()
+    fractions = np.concatenate(([0.0], np.cumsum(weights)))
+    fractions /= BASE_WINDOW_INTERVALS
+    fractions[0] = 0.0
+    fractions[-1] = 1.0
+    return fractions
 
 
 def _nonzero_unit(vector: np.ndarray) -> np.ndarray | None:
@@ -148,9 +163,11 @@ def _corner_ease_fractions(
     end_ratio = 1.0 - start_ratio
     parts: list[np.ndarray] = []
 
+    window_to_stop = _window_fractions_to_stop_v2()
+    window_from_stop = 1.0 - window_to_stop[::-1]
+
     if ease_start:
-        z = np.linspace(0.0, 1.0, RESAMPLED_WINDOW_INTERVALS + 1)
-        parts.append(start_ratio * ease_from_stop(z))
+        parts.append(start_ratio * window_from_stop)
     else:
         middle_end = end_ratio if ease_end else 1.0
         middle_intervals = base_intervals - (
@@ -167,8 +184,7 @@ def _corner_ease_fractions(
         parts.append(middle[1:])
 
     if ease_end:
-        z = np.linspace(0.0, 1.0, RESAMPLED_WINDOW_INTERVALS + 1)
-        ending = end_ratio + start_ratio * ease_to_stop(z)
+        ending = end_ratio + start_ratio * window_to_stop
         parts.append(ending[1:])
 
     fractions = np.concatenate(parts)

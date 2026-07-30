@@ -9,8 +9,10 @@ from digit_writing.corner_time_reparameterization import (
     CORNER_EASE_TIMING,
     EXTRA_INTERVALS_PER_SIDE,
     RESAMPLED_WINDOW_INTERVALS,
-    ease_from_stop,
-    ease_to_stop,
+    V2_STEP_WEIGHT_DENOMINATOR,
+    V2_STEP_WEIGHT_NUMERATORS,
+    _corner_ease_fractions,
+    corner_ease_step_weights_v2,
 )
 from digit_writing.geometry import (
     _identified_json_hash,
@@ -21,6 +23,8 @@ from digit_writing.geometry import (
 from digit_writing.protocol3_corner_ease import (
     EXPECTED_INTERVALS,
     EXPECTED_QUALIFYING_BOUNDARIES,
+    _kinematic_metrics,
+    _local_corner_points,
     _read_json,
     _validate_config,
     select_validation_history,
@@ -34,10 +38,10 @@ BASE_GEOMETRY = (
 )
 EASE_GEOMETRY = (
     CONFIG_ROOT
-    / "digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v1.json"
+    / "digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v2.json"
 )
 EXPERIMENT_CONFIG = (
-    CONFIG_ROOT / "digit_writing_original_protocol3_ten_digit_corner_ease_overfit.json"
+    CONFIG_ROOT / "digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v2.json"
 )
 
 
@@ -47,29 +51,33 @@ class Protocol3CornerEaseTests(unittest.TestCase):
         cls.baseline_config = load_geometry_config(BASE_GEOMETRY)
         cls.ease_config = load_geometry_config(EASE_GEOMETRY)
 
-    def test_quintic_boundary_values_and_derivatives(self):
-        self.assertEqual(float(ease_to_stop(0.0)), 0.0)
-        self.assertEqual(float(ease_to_stop(1.0)), 1.0)
-        self.assertEqual(float(ease_from_stop(0.0)), 0.0)
-        self.assertEqual(float(ease_from_stop(1.0)), 1.0)
+    def test_v2_step_table_is_frozen_positive_and_exact(self):
+        weights = corner_ease_step_weights_v2()
+        self.assertEqual(V2_STEP_WEIGHT_DENOMINATOR, 1380)
+        self.assertEqual(
+            V2_STEP_WEIGHT_NUMERATORS,
+            (1179,) * 9 + (994, 809, 624, 439, 254, 69),
+        )
+        self.assertEqual(len(weights), RESAMPLED_WINDOW_INTERVALS)
+        self.assertTrue(np.all(weights > 0.0))
+        self.assertAlmostEqual(float(weights.sum()), BASE_WINDOW_INTERVALS)
+        self.assertAlmostEqual(float(weights[-1]), 0.05)
 
-        def first(z):
-            return 1.0 + 12.0 * z**2 - 28.0 * z**3 + 15.0 * z**4
-
-        def second(z):
-            return 24.0 * z - 84.0 * z**2 + 60.0 * z**3
-
-        self.assertEqual(first(0.0), 1.0)
-        self.assertEqual(first(1.0), 0.0)
-        self.assertEqual(second(0.0), 0.0)
-        self.assertEqual(second(1.0), 0.0)
-        self.assertEqual(first(1.0), 0.0)
-        self.assertEqual(first(0.0), 1.0)
-
-    def test_quintic_maps_are_strictly_monotone(self):
-        grid = np.linspace(0.0, 1.0, 10001)
-        self.assertTrue(np.all(np.diff(ease_to_stop(grid)) > 0.0))
-        self.assertTrue(np.all(np.diff(ease_from_stop(grid)) > 0.0))
+    def test_v2_maps_are_strictly_monotone_and_time_reversed(self):
+        to_stop = _corner_ease_fractions(
+            60, ease_start=False, ease_end=True
+        )
+        from_stop = _corner_ease_fractions(
+            60, ease_start=True, ease_end=False
+        )
+        self.assertTrue(np.all(np.diff(to_stop) > 0.0))
+        self.assertTrue(np.all(np.diff(from_stop) > 0.0))
+        np.testing.assert_allclose(
+            np.diff(from_stop)[:RESAMPLED_WINDOW_INTERVALS],
+            np.diff(to_stop)[-RESAMPLED_WINDOW_INTERVALS:][::-1],
+            rtol=0.0,
+            atol=1e-15,
+        )
 
     def test_corner_ease_configuration_is_frozen_and_isolated(self):
         config = _read_json(EXPERIMENT_CONFIG)
@@ -244,6 +252,33 @@ class Protocol3CornerEaseTests(unittest.TestCase):
                 self.assertLessEqual(incoming / regular, 0.10)
                 self.assertLessEqual(outgoing / regular, 0.10)
 
+    def test_v2_local_kinematic_gate(self):
+        for digit in (2, 3, 4, 5, 7):
+            baseline = build_digit_trajectory(digit, self.baseline_config, 100)
+            candidate = build_digit_trajectory(digit, self.ease_config, 100)
+            for boundary_index in EXPECTED_QUALIFYING_BOUNDARIES[digit]:
+                baseline_metrics = _kinematic_metrics(
+                    _local_corner_points(
+                        baseline, boundary_index, BASE_WINDOW_INTERVALS
+                    ),
+                    self.baseline_config.dt_seconds,
+                )
+                candidate_metrics = _kinematic_metrics(
+                    _local_corner_points(
+                        candidate, boundary_index, RESAMPLED_WINDOW_INTERVALS
+                    ),
+                    self.ease_config.dt_seconds,
+                )
+                with self.subTest(digit=digit, boundary=boundary_index):
+                    self.assertLessEqual(
+                        candidate_metrics["p95_acceleration_m_s2"],
+                        baseline_metrics["p95_acceleration_m_s2"],
+                    )
+                    self.assertLessEqual(
+                        candidate_metrics["p95_jerk_m_s3"],
+                        baseline_metrics["p95_jerk_m_s3"],
+                    )
+
     def test_frozen_checkpoint_selection_rule(self):
         def row(update, mean, endpoint=0.02, path=1.0):
             return {
@@ -271,9 +306,13 @@ class Protocol3CornerEaseTests(unittest.TestCase):
         script = (
             ROOT
             / "server"
-            / "run_digit_writing_original_protocol3_ten_digit_corner_ease_parallel.sh"
+            / "run_digit_writing_original_protocol3_ten_digit_corner_ease_v2_parallel.sh"
         ).read_text(encoding="utf-8")
         self.assertIn("nproc >= 10", script)
+        self.assertIn(
+            'AVAILABLE_CPUS="$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)"',
+            script,
+        )
         self.assertIn("OMP_NUM_THREADS=1", script)
         self.assertIn("COMPLETED_CASES=10", script)
         self.assertIn("AUTOMATIC_EXTENSION_STARTED=0", script)

@@ -87,14 +87,14 @@ ac0c4f589eae37bbde63968912925de99232e306
 建议 timing mode 名称：
 
 ```text
-fixed_segment_timing_corner_ease_v1
+fixed_segment_timing_corner_ease_v2
 ```
 
 建议输出根目录：
 
 ```text
 runs/digit_writing_original_protocol3/
-scale2p50/ref100/corner_ease_v1/single_digit_overfit/
+scale2p50/ref100/corner_ease_v2/single_digit_overfit/
 ```
 
 每个数字独立目录：
@@ -113,7 +113,7 @@ digit9/seed42/
 protocol3
 scale2p50
 ref100
-corner-ease-v1
+corner-ease-v2
 digit
 direction0
 delay50
@@ -265,46 +265,35 @@ RESAMPLED_WINDOW_INTERVALS = 15
 
 不允许根据数字或转向角单独调整窗口和额外步数。
 
-## 5.3 五次单调时间映射
+## 5.3 v2 固定离散时间映射
 
-定义终点减速函数：
+v1 五次映射已在服务器通过 92 项代码测试，但在训练前运动学硬门禁中使以下局部
+`p95 acceleration` 上升：digit 4 boundary 0 为 4.98%，digit 5 两个 boundary
+分别为 23.39% 和 22.70%，digit 7 boundary 0 为 19.29%。所有训练均未启动。
 
-```python
-def ease_to_stop(z):
-    # z in [0, 1]
-    return z + 4*z**3 - 7*z**4 + 3*z**5
-```
+经用户明确授权，v2 只替换时间步长分配，不改变第 5.2 节空间窗口、总 intervals、
+尖角阈值、几何、hash、训练条件或运动学门禁。不得把 v1 结果伪装成 v2 结果。
 
-它满足：
-
-```text
-f(0)=0
-f(1)=1
-f'(0)=1
-f'(1)=0
-f''(0)=0
-f''(1)=0
-```
-
-定义起点加速函数：
-
-```python
-def ease_from_stop(z):
-    return 1.0 - ease_to_stop(1.0 - z)
-```
-
-它满足：
+终点减速窗口的 15 个正弧长步长，以一个基础 interval 为单位，固定为：
 
 ```text
-g(0)=0
-g(1)=1
-g'(0)=0
-g'(1)=1
-g''(0)=0
-g''(1)=0
+denominator = 1380
+numerators  = [
+  1179, 1179, 1179, 1179, 1179, 1179, 1179, 1179, 1179,
+   994,  809,  624,  439,  254,   69
+]
 ```
 
-两者在 `[0,1]` 上必须严格单调。
+必须满足：
+
+```text
+sum(step_weights) = 10
+step_weights > 0
+last_step / baseline_step = 69 / 1380 = 0.05
+```
+
+起点加速窗口严格使用上述序列的时间反向。累计弧长比例由步长序列直接累加并除以
+10 得到，必须严格单调。不得按数字、转向角或服务器结果调整此表。
 
 ## 5.4 单片段采样规则
 
@@ -322,7 +311,7 @@ g''(1)=0
   ```
 - 起点窗口用 15 intervals 采样：
   ```python
-  u = r_start * ease_from_stop(k / 15)
+  u = r_start * cumulative(reverse(step_weights))[k] / 10
   ```
 - 剩余空间 `[r_start, 1]` 使用原剩余 `N-10` intervals 均匀采样；
 - 新总 intervals：
@@ -339,7 +328,7 @@ g''(1)=0
 - 前段 `[0, 1-r_end]` 使用原 `N-10` intervals 均匀采样；
 - 终点窗口用 15 intervals：
   ```python
-  u = (1-r_end) + r_end * ease_to_stop(k / 15)
+  u = (1-r_end) + r_end * cumulative(step_weights)[k] / 10
   ```
 - 新总 intervals：
   ```text
@@ -841,8 +830,7 @@ digit_writing/corner_time_reparameterization.py
 其中只包含：
 
 ```text
-ease_to_stop
-ease_from_stop
+corner_ease_step_weights_v2
 detect_sharp_boundaries
 resample_segment_with_corner_easing
 ```
@@ -851,7 +839,7 @@ resample_segment_with_corner_easing
 
 ```text
 fixed_segment_timing
-fixed_segment_timing_corner_ease_v1
+fixed_segment_timing_corner_ease_v2
 ```
 
 默认模式和所有旧配置行为必须保持不变。
@@ -864,8 +852,8 @@ fixed_segment_timing_corner_ease_v1
 
 训练前至少通过：
 
-1. `ease_to_stop()` 和 `ease_from_stop()` 的边界值、导数条件；
-2. 两个映射严格单调；
+1. v2 固定分子、分母、严格正步长、总弧长和末步 0.05 比例；
+2. 减速与时间反向加速映射严格单调；
 3. `corner_ease` 关闭时目标与 baseline 逐点一致；
 4. 非尖角数字目标逐点不变；
 5. 尖角清单与冻结清单一致；
