@@ -84,6 +84,7 @@ class Segment:
     name: str
     points_units: np.ndarray
     shared_id: str | None = None
+    source_geometry: dict[str, object] | None = None
 
     def points_m(
         self, scale_m_per_unit: float = GLOBAL_SCALE_M_PER_UNIT
@@ -167,30 +168,42 @@ def _place_start_at_origin(segments: list[Segment]) -> list[Segment]:
             name=segment.name,
             points_units=np.asarray(segment.points_units, dtype=np.float64) - origin,
             shared_id=segment.shared_id,
+            source_geometry={
+                "definition": (
+                    segment.source_geometry
+                    if segment.source_geometry is not None
+                    else {
+                        "primitive": "polyline",
+                        "anchors_units": np.asarray(
+                            segment.points_units, dtype=np.float64
+                        ).tolist(),
+                    }
+                ),
+                "digit_origin_translation_units": (-origin).tolist(),
+            },
         )
         for segment in segments
     ]
 
 
-def canonical_curve_a() -> np.ndarray:
-    """Axis-symmetric curve A, traversed from upper endpoint to lower endpoint."""
+def _curve_a_control_points() -> np.ndarray:
     d = 0.38
     h = CURVE_HEIGHT_UNITS
-    return _bezier(
+    return np.asarray(
         [
             [0.0, +h / 2.0],
             [4.0 * d / 3.0, +h / 2.0],
             [4.0 * d / 3.0, -h / 2.0],
             [0.0, -h / 2.0],
-        ]
+        ],
+        dtype=np.float64,
     )
 
 
-def canonical_curve_b() -> np.ndarray:
-    """Axis-symmetric, fuller curve B, traversed upper endpoint to lower endpoint."""
+def _curve_b_control_points() -> np.ndarray:
     d = 0.40
     h = CURVE_HEIGHT_UNITS
-    return _bezier(
+    return np.asarray(
         [
             [0.0, +h / 2.0],
             [0.95 * d, +h / 2.0],
@@ -198,8 +211,19 @@ def canonical_curve_b() -> np.ndarray:
             [1.22 * d, -0.16 * h],
             [0.95 * d, -h / 2.0],
             [0.0, -h / 2.0],
-        ]
+        ],
+        dtype=np.float64,
     )
+
+
+def canonical_curve_a() -> np.ndarray:
+    """Axis-symmetric curve A, traversed from upper endpoint to lower endpoint."""
+    return _bezier(_curve_a_control_points())
+
+
+def canonical_curve_b() -> np.ndarray:
+    """Axis-symmetric, fuller curve B, traversed upper endpoint to lower endpoint."""
+    return _bezier(_curve_b_control_points())
 
 
 def independent_digit8() -> np.ndarray:
@@ -219,14 +243,60 @@ def independent_digit8() -> np.ndarray:
     return path
 
 
+def _bezier_source(control_points: np.ndarray) -> dict[str, object]:
+    return {
+        "primitive": "bezier",
+        "control_points_units": np.asarray(
+            control_points, dtype=np.float64
+        ).tolist(),
+    }
+
+
+def _ellipse_source(
+    rx: float,
+    ry: float,
+    start_degrees: float,
+    end_degrees: float,
+) -> dict[str, object]:
+    return {
+        "primitive": "ellipse",
+        "center_units": [0.0, 0.0],
+        "radius_x_units": rx,
+        "radius_y_units": ry,
+        "start_degrees": start_degrees,
+        "end_degrees": end_degrees,
+    }
+
+
+def _digit8_source() -> dict[str, object]:
+    return {
+        "primitive": "gerono",
+        "total_height_units": 0.96,
+        "width_to_height_ratio": UJI8_WIDTH_TO_HEIGHT,
+        "parameter_start_radians": 0.0,
+        "parameter_end_radians": 2.0 * math.pi,
+        "x_formula": "-a*sin(2*t)",
+        "y_formula": "b*(cos(t)-1)",
+    }
+
+
 def build_digit_segments_units() -> dict[int, list[Segment]]:
     a = canonical_curve_a()
     b = canonical_curve_b()
+    a_controls = _curve_a_control_points()
+    b_controls = _curve_b_control_points()
     digits: dict[int, list[Segment]] = {}
 
     # 0: unchanged 4:3 vertical ellipse, top start, counter-clockwise.
     digits[0] = _place_start_at_origin(
-        [Segment("ellipse_4_3", _ellipse(0.36, 0.48, 90.0, 450.0), "ellipse_4_3")]
+        [
+            Segment(
+                "ellipse_4_3",
+                _ellipse(0.36, 0.48, 90.0, 450.0),
+                "ellipse_4_3",
+                _ellipse_source(0.36, 0.48, 90.0, 450.0),
+            )
+        ]
     )
 
     # 1: unchanged vertical down.
@@ -236,7 +306,9 @@ def build_digit_segments_units() -> dict[int, list[Segment]]:
 
     # 2: A rotated 55 degrees, tangent 55-degree diagonal, longer bottom bar.
     a2 = _rotate(a, 55.0)
-    a2 = a2 - a2[0]
+    a2_origin = a2[0].copy()
+    a2 = a2 - a2_origin
+    a2_controls = _rotate(a_controls, 55.0) - a2_origin
     diagonal_direction = np.array(
         [math.cos(math.radians(235.0)), math.sin(math.radians(235.0))],
         dtype=np.float64,
@@ -245,7 +317,12 @@ def build_digit_segments_units() -> dict[int, list[Segment]]:
     bottom_end = diagonal_end + np.array([0.64, 0.0])
     digits[2] = _place_start_at_origin(
         [
-            Segment("curve_A_2", a2, "curve_A"),
+            Segment(
+                "curve_A_2",
+                a2,
+                "curve_A",
+                _bezier_source(a2_controls),
+            ),
             Segment("diagonal_55_2", _polyline(a2[-1], diagonal_end)),
             Segment("horizontal_2", _polyline(diagonal_end, bottom_end)),
         ]
@@ -254,10 +331,22 @@ def build_digit_segments_units() -> dict[int, list[Segment]]:
     # 3: upper A followed by lower B.
     a3 = a - a[0]
     b3 = b - b[0] + a3[-1]
+    a3_controls = a_controls - a[0]
+    b3_controls = b_controls - b[0] + a3[-1]
     digits[3] = _place_start_at_origin(
         [
-            Segment("curve_A_3", a3, "curve_A"),
-            Segment("curve_B_3", b3, "curve_B"),
+            Segment(
+                "curve_A_3",
+                a3,
+                "curve_A",
+                _bezier_source(a3_controls),
+            ),
+            Segment(
+                "curve_B_3",
+                b3,
+                "curve_B",
+                _bezier_source(b3_controls),
+            ),
         ]
     )
 
@@ -279,11 +368,17 @@ def build_digit_segments_units() -> dict[int, list[Segment]]:
     p1 = np.array([-0.42, 0.0])
     p2 = p1 + np.array([0.0, -0.48])
     b5 = b - b[0] + p2
+    b5_controls = b_controls - b[0] + p2
     digits[5] = _place_start_at_origin(
         [
             Segment("horizontal_5", _polyline(p0, p1)),
             Segment("vertical_5", _polyline(p1, p2)),
-            Segment("curve_B_5", b5, "curve_B"),
+            Segment(
+                "curve_B_5",
+                b5,
+                "curve_B",
+                _bezier_source(b5_controls),
+            ),
         ]
     )
 
@@ -302,6 +397,12 @@ def build_digit_segments_units() -> dict[int, list[Segment]]:
                 "ellipse_5_4_6",
                 _ellipse(rx_69, ry_69, math.degrees(phi6), math.degrees(phi6) + 360.0),
                 "ellipse_5_4",
+                _ellipse_source(
+                    rx_69,
+                    ry_69,
+                    math.degrees(phi6),
+                    math.degrees(phi6) + 360.0,
+                ),
             ),
         ]
     )
@@ -316,7 +417,14 @@ def build_digit_segments_units() -> dict[int, list[Segment]]:
 
     # 8: independent path, no shared fragment.
     digits[8] = _place_start_at_origin(
-        [Segment("independent_uji8", independent_digit8())]
+        [
+            Segment(
+                "independent_uji8",
+                independent_digit8(),
+                None,
+                _digit8_source(),
+            )
+        ]
     )
 
     # 9: same 5:4 ellipse dimensions, right start, clockwise, then shorter vertical tail.
@@ -326,7 +434,12 @@ def build_digit_segments_units() -> dict[int, list[Segment]]:
     tail9 = _polyline(loop9[-1], loop9[-1] + np.array([0.0, -0.90]))
     digits[9] = _place_start_at_origin(
         [
-            Segment("ellipse_5_4_9", loop9, "ellipse_5_4"),
+            Segment(
+                "ellipse_5_4_9",
+                loop9,
+                "ellipse_5_4",
+                _ellipse_source(rx_69, ry_69, 0.0, -360.0),
+            ),
             Segment("vertical_9", tail9),
         ]
     )
@@ -405,6 +518,10 @@ def sample_digit(
                 "name": segment.name,
                 "shared_id": segment.shared_id,
                 "timing_key": timing_key(segment),
+                "source_geometry": segment.source_geometry,
+                "derived_path_units": np.asarray(
+                    segment.points_units, dtype=np.float64
+                ),
                 "arc_length_m": length_m,
                 "intervals": intervals,
                 "samples": intervals + 1,

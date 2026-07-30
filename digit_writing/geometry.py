@@ -22,10 +22,19 @@ from digit_writing.digit_geometry_final import (
     FIXED_SEGMENT_TIMING,
     GLOBAL_SCALE_M_PER_UNIT,
     PHYSICAL_SPEED_ARCLENGTH,
+    arc_length,
+    build_digit_segments_units,
     canonical_curve_a,
     canonical_curve_b,
     resample_linear_arclength,
     sample_digit,
+    segment_intervals,
+    timing_key,
+)
+from digit_writing.corner_time_reparameterization import (
+    CORNER_EASE_TIMING,
+    detect_sharp_boundaries,
+    resample_segment_with_corner_easing,
 )
 
 
@@ -62,6 +71,9 @@ class PrimitiveBoundary:
     canonical_sample_sha256: str
     canonical_template_sha256: str
     ordered_instance_sha256: str
+    source_geometry_sha256: str
+    derived_path_geometry_sha256: str
+    temporal_sampling_sha256: str
 
 
 @dataclass(frozen=True)
@@ -76,6 +88,7 @@ class DigitTrajectory:
     actual_mean_speed_m_s: float
     points: np.ndarray
     boundaries: tuple[PrimitiveBoundary, ...]
+    corner_ease_boundaries: tuple[Mapping[str, object], ...]
 
 
 def _require_exact_keys(
@@ -184,8 +197,11 @@ def load_geometry_config(path: str | Path) -> GeometryConfig:
     else:
         if config.scale_multiplier not in {2.5, 2.25}:
             raise ValueError("protocol3 scale_multiplier must be 2.5 or 2.25")
-        if config.timing_mode != FIXED_SEGMENT_TIMING:
-            raise ValueError("protocol3 requires fixed_segment_timing")
+        if config.timing_mode not in {
+            FIXED_SEGMENT_TIMING,
+            CORNER_EASE_TIMING,
+        }:
+            raise ValueError("protocol3 timing_mode is not supported")
         if config.selected_reference_steps not in {50, 100}:
             raise ValueError("protocol3 selected_reference_steps must be 50 or 100")
         expected_references = (int(config.selected_reference_steps),)
@@ -193,6 +209,11 @@ def load_geometry_config(path: str | Path) -> GeometryConfig:
             raise ValueError("protocol3 training reference must match the selected value")
         if config.validation_reference_steps != expected_references:
             raise ValueError("protocol3 validation reference must match the selected value")
+        if config.timing_mode == CORNER_EASE_TIMING and (
+            config.scale_multiplier != 2.5
+            or config.selected_reference_steps != 100
+        ):
+            raise ValueError("corner easing is frozen to scale2p50/ref100")
     return config
 
 
@@ -232,6 +253,118 @@ def _identified_sample_hash(points: np.ndarray) -> str:
     return hashlib.sha256(header + canonical.tobytes()).hexdigest()
 
 
+def _identified_json_hash(value: object) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(b"encoding=canonical-json-v1;" + payload).hexdigest()
+
+
+def _sample_corner_ease_digit(
+    digit: int,
+    *,
+    dt_seconds: float,
+    scale_m_per_unit: float,
+    selected_reference_steps: int,
+) -> dict[str, object]:
+    digits = build_digit_segments_units()
+    if digit not in digits:
+        raise ValueError(f"unknown digit: {digit}")
+    segments = digits[digit]
+    base_intervals = [
+        segment_intervals(segment, selected_reference_steps)
+        for segment in segments
+    ]
+    dense_segments_m = [
+        segment.points_m(scale_m_per_unit) for segment in segments
+    ]
+    baseline_samples = [
+        resample_linear_arclength(points, intervals)
+        for points, intervals in zip(dense_segments_m, base_intervals)
+    ]
+    corners = detect_sharp_boundaries(
+        baseline_samples,
+        [segment.name for segment in segments],
+    )
+    ease_at_end = {corner.boundary_index for corner in corners if corner.qualifies}
+    ease_at_start = {
+        corner.boundary_index + 1 for corner in corners if corner.qualifies
+    }
+
+    sampled_segments = []
+    segment_records = []
+    boundaries = [0]
+    for index, (segment, dense_m, intervals) in enumerate(
+        zip(segments, dense_segments_m, base_intervals)
+    ):
+        sampled = resample_segment_with_corner_easing(
+            dense_m,
+            intervals,
+            ease_start=index in ease_at_start,
+            ease_end=index in ease_at_end,
+        )
+        actual_intervals = len(sampled) - 1
+        length_m = arc_length(dense_m)
+        sampled_segments.append(sampled)
+        segment_records.append(
+            {
+                "name": segment.name,
+                "shared_id": segment.shared_id,
+                "timing_key": timing_key(segment),
+                "source_geometry": segment.source_geometry,
+                "derived_path_units": np.asarray(
+                    segment.points_units, dtype=np.float64
+                ),
+                "arc_length_m": length_m,
+                "base_intervals": intervals,
+                "intervals": actual_intervals,
+                "samples": actual_intervals + 1,
+                "ease_at_start": index in ease_at_start,
+                "ease_at_end": index in ease_at_end,
+                "actual_mean_speed_m_s": (
+                    length_m / (actual_intervals * dt_seconds)
+                ),
+            }
+        )
+        boundaries.append(boundaries[-1] + actual_intervals)
+
+    path = np.vstack(
+        [
+            sampled if index == 0 else sampled[1:]
+            for index, sampled in enumerate(sampled_segments)
+        ]
+    )
+    return {
+        "digit": digit,
+        "speed_mps": None,
+        "timing_mode": CORNER_EASE_TIMING,
+        "selected_reference_steps": selected_reference_steps,
+        "scale_m_per_unit": scale_m_per_unit,
+        "dt_s": dt_seconds,
+        "path_m": path,
+        "movement_intervals": len(path) - 1,
+        "movement_samples": len(path),
+        "duration_s": (len(path) - 1) * dt_seconds,
+        "segment_boundaries": boundaries,
+        "segments": segment_records,
+        "corner_ease_boundaries": [
+            {
+                "boundary_index": corner.boundary_index,
+                "previous_segment": corner.previous_segment,
+                "next_segment": corner.next_segment,
+                "turn_angle_deg": corner.turn_angle_deg,
+                "qualifies": corner.qualifies,
+                "corner_sample_index": boundaries[corner.boundary_index + 1],
+            }
+            for corner in corners
+        ],
+    }
+
+
 @lru_cache(maxsize=256)
 def _sample_final(
     digit: int,
@@ -250,7 +383,7 @@ def _sample_final(
             scale_m_per_unit=scale_m_per_unit,
             timing_mode=timing_mode,
         )
-    else:
+    elif timing_mode == FIXED_SEGMENT_TIMING:
         result = sample_digit(
             digit,
             None,
@@ -259,6 +392,17 @@ def _sample_final(
             timing_mode=timing_mode,
             selected_reference_steps=selected_reference_steps,
         )
+    elif timing_mode == CORNER_EASE_TIMING:
+        if selected_reference_steps != 100:
+            raise ValueError("corner easing is frozen to reference_steps=100")
+        result = _sample_corner_ease_digit(
+            digit,
+            dt_seconds=dt_seconds,
+            scale_m_per_unit=scale_m_per_unit,
+            selected_reference_steps=selected_reference_steps,
+        )
+    else:
+        raise ValueError(f"unsupported timing_mode: {timing_mode}")
     path = np.asarray(result["path_m"], dtype=np.float64)
     path.setflags(write=False)
     result["path_m"] = path
@@ -348,6 +492,15 @@ def build_digit_trajectory(
                 ordered_instance_sha256=_identified_sample_hash(
                     ordered_instance
                 ),
+                source_geometry_sha256=_identified_json_hash(
+                    record["source_geometry"]
+                ),
+                derived_path_geometry_sha256=_identified_sample_hash(
+                    np.asarray(record["derived_path_units"], dtype=np.float64)
+                ),
+                temporal_sampling_sha256=_identified_sample_hash(
+                    ordered_instance
+                ),
             )
         )
 
@@ -368,6 +521,9 @@ def build_digit_trajectory(
         ),
         points=points,
         boundaries=tuple(boundaries),
+        corner_ease_boundaries=tuple(
+            dict(row) for row in sampled.get("corner_ease_boundaries", ())
+        ),
     )
 
 

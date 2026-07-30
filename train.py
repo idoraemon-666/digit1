@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import shutil
 import torch
 import motornet as mn
 import random
@@ -375,6 +376,7 @@ def _do_protocol3_eval(
     single_condition = hp.get("condition_schedule") in {
         "protocol3_gate2_single_condition",
         "protocol3_corner_settle_single_condition",
+        "protocol3_corner_ease_single_condition",
     }
     deterministic = single_condition or bool(hp.get("deterministic_evaluation", False))
     if single_condition:
@@ -448,6 +450,7 @@ def _protocol3_training_condition(env_list, hp):
     elif schedule in {
         "protocol3_gate2_single_condition",
         "protocol3_corner_settle_single_condition",
+        "protocol3_corner_ease_single_condition",
     }:
         environment_class = env_list[0]
         delay_index = hp["gate2_delay_index"]
@@ -967,8 +970,16 @@ def train_subsets_base_model(
         np.random.seed(hp["seed"])
         torch.manual_seed(hp["seed"])
 
-    # save hyperparameters
-    save_hp(hp, model_path)
+    artifact_profile = hp.get("artifact_profile")
+    minimal_corner_ease_outputs = (
+        artifact_profile == "protocol3_corner_ease_minimal_v1"
+    )
+    if minimal_corner_ease_outputs and hp.get("condition_schedule") != (
+        "protocol3_corner_ease_single_condition"
+    ):
+        raise ValueError("corner-ease artifact profile requires its frozen schedule")
+    if not minimal_corner_ease_outputs:
+        save_hp(hp, model_path)
 
     device = torch.device("cpu")
     effector = mn.effector.RigidTendonArm26(mn.muscle.MujocoHillMuscle())
@@ -1012,10 +1023,27 @@ def train_subsets_base_model(
 
     schedule = hp.get("condition_schedule")
     gate2 = schedule == "protocol3_gate2_single_condition"
+    corner_ease_selection = schedule == "protocol3_corner_ease_single_condition"
     single_condition = schedule in {
         "protocol3_gate2_single_condition",
         "protocol3_corner_settle_single_condition",
+        "protocol3_corner_ease_single_condition",
     }
+    corner_ease_pass_streak = 0
+    corner_ease_current_streak_best = None
+    corner_ease_stable_best = None
+    corner_ease_passing_best = None
+    corner_ease_mean_best = None
+    corner_ease_stable_intervals = []
+    corner_ease_current_interval_start = None
+    corner_ease_temp_paths = {
+        "current": os.path.join(model_path, ".corner_ease_current.pt"),
+        "stable": os.path.join(model_path, ".corner_ease_stable.pt"),
+        "passing": os.path.join(model_path, ".corner_ease_passing.pt"),
+        "mean": os.path.join(model_path, ".corner_ease_mean.pt"),
+    }
+    if corner_ease_selection and resume_checkpoint is not None:
+        raise ValueError("corner-ease overfit does not support continuation")
     experimental_resume_learning_rate = hp.get(
         "experimental_resume_learning_rate"
     )
@@ -1188,7 +1216,7 @@ def train_subsets_base_model(
         raise ValueError("single-condition target must end on a validation boundary")
 
     def protocol3_training_state():
-        return {
+        state = {
             "completed_updates": completed_updates,
             "next_update": completed_updates,
             "condition_counts": condition_counts,
@@ -1199,6 +1227,15 @@ def train_subsets_base_model(
             "last_validation_loss": last_test_loss,
             "gate2_consecutive_passes": gate2_consecutive_passes,
         }
+        if corner_ease_selection:
+            state["corner_ease_selection"] = {
+                "pass_streak": corner_ease_pass_streak,
+                "stable_best": corner_ease_stable_best,
+                "passing_best": corner_ease_passing_best,
+                "mean_best": corner_ease_mean_best,
+                "stable_intervals": list(corner_ease_stable_intervals),
+            }
+        return state
 
     def validate_protocol3_checkpoint(*, count_gate2_pass):
         nonlocal best_test_loss
@@ -1206,6 +1243,12 @@ def train_subsets_base_model(
         nonlocal gate2_consecutive_passes
         nonlocal gate2_passed
         nonlocal last_test_loss
+        nonlocal corner_ease_pass_streak
+        nonlocal corner_ease_current_streak_best
+        nonlocal corner_ease_stable_best
+        nonlocal corner_ease_passing_best
+        nonlocal corner_ease_mean_best
+        nonlocal corner_ease_current_interval_start
 
         validation_metrics = _run_validation(
             policy,
@@ -1224,18 +1267,24 @@ def train_subsets_base_model(
             **validation_metrics,
         }
         validation_history.append(validation_row)
-        np.savetxt(os.path.join(model_path, "test_losses.txt"), test_losses)
-        _append_jsonl(
-            os.path.join(model_path, "test_position_metrics.jsonl"),
-            validation_row,
-        )
-        _append_jsonl(
-            os.path.join(model_path, "training_condition_counts.jsonl"),
-            {
-                "completed_updates": completed_updates,
-                **condition_counts,
-            },
-        )
+        if minimal_corner_ease_outputs:
+            _append_jsonl(
+                os.path.join(model_path, "metrics.jsonl"),
+                validation_row,
+            )
+        else:
+            np.savetxt(os.path.join(model_path, "test_losses.txt"), test_losses)
+            _append_jsonl(
+                os.path.join(model_path, "test_position_metrics.jsonl"),
+                validation_row,
+            )
+            _append_jsonl(
+                os.path.join(model_path, "training_condition_counts.jsonl"),
+                {
+                    "completed_updates": completed_updates,
+                    **condition_counts,
+                },
+            )
         if not single_condition:
             sentinel_hp = dict(hp)
             sentinel_hp["deterministic_evaluation"] = True
@@ -1269,24 +1318,113 @@ def train_subsets_base_model(
             )
             gate2_passed = gate2_consecutive_passes >= 2
 
-        is_best = test_loss <= best_test_loss
-        if is_best:
-            best_test_loss = test_loss
-            best_checkpoint_update = completed_updates
-            torch.save(
-                _checkpoint_payload(
-                    policy,
-                    optimizer,
-                    hp,
-                    completed_updates,
-                    test_loss,
-                    training_state=protocol3_training_state(),
-                ),
-                os.path.join(model_path, model_file),
+        if corner_ease_selection:
+            mean_error = float(validation_metrics["normalized_mean_error"])
+            if test_loss < best_test_loss:
+                best_test_loss = test_loss
+            passed_now = bool(
+                mean_error <= 0.08
+                and validation_metrics["normalized_endpoint_error"] <= 0.05
+                and 0.85 <= validation_metrics["path_length_ratio"] <= 1.15
             )
-            print("Model Saved!")
-            print(f"Directory: {model_path}/{model_file}")
-            print("\n")
+            selection_row = {
+                "completed_updates": completed_updates,
+                "normalized_mean_error": mean_error,
+                "normalized_endpoint_error": float(
+                    validation_metrics["normalized_endpoint_error"]
+                ),
+                "path_length_ratio": float(
+                    validation_metrics["path_length_ratio"]
+                ),
+            }
+
+            def save_selection_candidate(path):
+                torch.save(
+                    _checkpoint_payload(
+                        policy,
+                        optimizer,
+                        hp,
+                        completed_updates,
+                        test_loss,
+                        training_state=protocol3_training_state(),
+                    ),
+                    path,
+                )
+
+            if (
+                corner_ease_mean_best is None
+                or mean_error
+                < corner_ease_mean_best["normalized_mean_error"]
+            ):
+                corner_ease_mean_best = dict(selection_row)
+                save_selection_candidate(corner_ease_temp_paths["mean"])
+            if passed_now and (
+                corner_ease_passing_best is None
+                or mean_error
+                < corner_ease_passing_best["normalized_mean_error"]
+            ):
+                corner_ease_passing_best = dict(selection_row)
+                save_selection_candidate(corner_ease_temp_paths["passing"])
+
+            if passed_now:
+                if corner_ease_pass_streak == 0:
+                    corner_ease_current_interval_start = completed_updates
+                    corner_ease_current_streak_best = None
+                corner_ease_pass_streak += 1
+                if (
+                    corner_ease_current_streak_best is None
+                    or mean_error
+                    < corner_ease_current_streak_best["normalized_mean_error"]
+                ):
+                    corner_ease_current_streak_best = dict(selection_row)
+                    save_selection_candidate(corner_ease_temp_paths["current"])
+                if corner_ease_pass_streak == 3:
+                    corner_ease_stable_intervals.append(
+                        {
+                            "start_update": corner_ease_current_interval_start,
+                            "end_update": completed_updates,
+                        }
+                    )
+                elif corner_ease_pass_streak > 3:
+                    corner_ease_stable_intervals[-1]["end_update"] = (
+                        completed_updates
+                    )
+                if corner_ease_pass_streak >= 3 and (
+                    corner_ease_stable_best is None
+                    or corner_ease_current_streak_best["normalized_mean_error"]
+                    < corner_ease_stable_best["normalized_mean_error"]
+                ):
+                    corner_ease_stable_best = dict(
+                        corner_ease_current_streak_best
+                    )
+                    shutil.copy2(
+                        corner_ease_temp_paths["current"],
+                        corner_ease_temp_paths["stable"],
+                    )
+            else:
+                corner_ease_pass_streak = 0
+                corner_ease_current_streak_best = None
+                corner_ease_current_interval_start = None
+
+        if not corner_ease_selection:
+            is_best = test_loss <= best_test_loss
+            if is_best:
+                best_test_loss = test_loss
+                best_checkpoint_update = completed_updates
+                torch.save(
+                    _checkpoint_payload(
+                        policy,
+                        optimizer,
+                        hp,
+                        completed_updates,
+                        test_loss,
+                        training_state=protocol3_training_state(),
+                    ),
+                    os.path.join(model_path, model_file),
+                )
+                print("Model Saved!")
+                print(f"Directory: {model_path}/{model_file}")
+                print("\n")
 
     if protocol3 and completed_updates == 0:
         validate_protocol3_checkpoint(count_gate2_pass=False)
@@ -1396,13 +1534,14 @@ def train_subsets_base_model(
                     batch, progress_target, mean_loss
                 )
             )
-            _append_jsonl(
-                os.path.join(model_path, "training_position_metrics.jsonl"),
-                {
-                    "update": completed_updates if protocol3 else batch,
-                    **detached_position_metrics(position_metrics),
-                },
-            )
+            if not minimal_corner_ease_outputs:
+                _append_jsonl(
+                    os.path.join(model_path, "training_position_metrics.jsonl"),
+                    {
+                        "update": completed_updates if protocol3 else batch,
+                        **detached_position_metrics(position_metrics),
+                    },
+                )
 
         if protocol3 and completed_updates % hp["save_iter"] == 0:
             validate_protocol3_checkpoint(count_gate2_pass=True)
@@ -1441,6 +1580,53 @@ def train_subsets_base_model(
                 print("Model Saved!")
                 print(f"Directory: {model_path}/{model_file}")
                 print("\n")
+    corner_ease_selection_summary = None
+    if corner_ease_selection:
+        if corner_ease_stable_best is not None:
+            selection_status = "STABLE_PASS"
+            selected = corner_ease_stable_best
+            selected_path = corner_ease_temp_paths["stable"]
+        elif corner_ease_passing_best is not None:
+            selection_status = "PASS_UNSTABLE"
+            selected = corner_ease_passing_best
+            selected_path = corner_ease_temp_paths["passing"]
+        else:
+            selection_status = "FAIL"
+            selected = corner_ease_mean_best
+            selected_path = corner_ease_temp_paths["mean"]
+        if selected is None or not os.path.isfile(selected_path):
+            raise RuntimeError("corner-ease checkpoint selection is incomplete")
+        best_checkpoint_update = int(selected["completed_updates"])
+        shutil.copy2(selected_path, os.path.join(model_path, model_file))
+        corner_ease_selection_summary = {
+            "status": selection_status,
+            "best_update": best_checkpoint_update,
+            "best_metrics": dict(selected),
+            "stable_intervals": list(corner_ease_stable_intervals),
+            "selection_rule": {
+                "stable_consecutive_evaluations": 3,
+                "primary_metric": "normalized_mean_error",
+                "tie_break": "earlier_update",
+            },
+        }
+        from digit_writing.protocol3_corner_ease import select_validation_history
+
+        independently_selected = select_validation_history(validation_history)
+        for key in (
+            "status",
+            "best_update",
+            "best_metrics",
+            "stable_intervals",
+        ):
+            if corner_ease_selection_summary[key] != independently_selected[key]:
+                raise RuntimeError(
+                    "online corner-ease checkpoint selection differs from "
+                    "the frozen history rule"
+                )
+        for temporary in corner_ease_temp_paths.values():
+            if os.path.isfile(temporary):
+                os.remove(temporary)
+
     final_model_file = hp.get("final_model_file")
     if final_model_file:
         training_state = protocol3_training_state() if protocol3 else None
@@ -1484,6 +1670,7 @@ def train_subsets_base_model(
             "best_checkpoint_update": best_checkpoint_update,
             "validation_history": validation_history if protocol3 else None,
             "early_audit_pending": early_audit_pending,
+            "corner_ease_selection": corner_ease_selection_summary,
         }
 
 
