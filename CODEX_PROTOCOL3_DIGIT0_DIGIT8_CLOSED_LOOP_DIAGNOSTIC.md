@@ -4,15 +4,15 @@
 
 本文件只属于 `digit_writing_original_protocol3`，用于把 digit0 和 digit8 的现有失败拆解为可复核的时序、空间、RNN 相位、正则梯度和动力学机制。
 
-本文件已完成**实验设计和 Stage A 实现草案**；实现尚未运行 Python/测试，也未在服务器执行，正式实现身份以部署时的 Protocol3 Git HEAD 冻结。当前不自动授权：
+本文件已完成 **Stage A 实现、服务器执行与人工诊断**，并已形成 **Stage B 四臂同步训练实现草案**。Stage B 尚未运行本地 Python/测试或服务器训练，正式实现身份以提交后的 Protocol3 Git HEAD 冻结。当前不自动授权：
 
 - 修改正式几何、时间表、loss、网络、batch 或工程阈值；
 - 运行本地 Python、测试或训练；
-- 启动服务器诊断、digit8 续跑、第二种子或 formal full10；
+- 代替用户执行服务器命令，或启动第二种子、自动改 geometry/loss、formal full10；
 - 复用旧 `o3_digit8` LR 消融；
 - 给起点、终点、闭环、自交点或其他特殊点增加权重。
 
-Stage A 实现必须先提交到正式 Protocol3 分支并通过服务器测试；所有服务器命令仍只由用户执行。Stage A 是 0 optimizer-step 只读诊断；Stage B 包含两臂训练，必须在 Stage A 完成并人工复核后由用户单独授权启动。
+Stage A 实现必须先提交到正式 Protocol3 分支并通过服务器测试；所有服务器命令仍只由用户执行。Stage A 是 0 optimizer-step 只读诊断；Stage B 包含 digit0/digit8 × 双 LR 四个独立同步训练臂，已在 Stage A 完成并人工复核后由用户单独授权设计。
 
 ## 1. 当前事实与实验目标
 
@@ -65,7 +65,7 @@ final@6000: mean=0.047249 endpoint=0.115620 path=0.843315
 ```text
 Stage A：7 个现有 checkpoint 的联合 0-step deterministic 诊断
     ↓ 强制暂停并人工复核
-Stage B：仅 digit8 的当前 v3 双 LR 6000→8000 匹配续跑
+Stage B：digit0 / digit8 的当前 v3 双 LR 四臂同步 6000→8000 匹配续跑
     ↓ 强制暂停并人工复核
 可选 Plant Gate：只有 Stage A/B 仍无法区分 plant 可行性时另行设计和授权
 ```
@@ -395,26 +395,30 @@ mixed_mechanism
 
 以下使用已有工程阈值直接确定：closure tolerance、mean/endpoint/path PASS、workspace/joint safety。其余新机制不新增未经数据支持的硬数值阈值。
 
-## 5. Stage B：当前 v3 digit8 匹配双 LR 续跑
+## 5. Stage B：当前 v3 digit0 / digit8 四臂同步匹配续跑
 
 ### 5.1 目的
 
-Stage B 只检验：digit8 是否能由训练长度或 LR 解释。它不修改目标，也不作为修复方案。
+Stage B 同步检验：digit0 和 digit8 各自是否能由训练长度或 LR 解释。它不修改目标，也不作为修复方案。
 
-digit0 不重跑，复用已完成 12 臂实验中的两臂结果。digit8 从当前 v3 state-complete final@6000 恢复：
+两个数字都从当前 v3 state-complete final@6000 恢复。四个臂在同一 runner、同一实现 HEAD 和同一服务器环境中并行启动：
 
 ```text
-best checkpoint SHA: f70e0ba8e8585414f499f8ae2cc54e9061923983ea444ca62117e5faa5822a39
-final checkpoint SHA: 2812c1c336c14d8cb58bb02638592499d0bc018fb6628287d73e10a5dfa445ce
+digit0 best checkpoint SHA: 629e353d161281265e40d221cf5bcd30d2906db05b459f2a7be2b62efe81cff7
+digit0 final checkpoint SHA: fd4c42c7a5ee546ccdc65615df2648379fdc1b36f36dbe0d918de5ed476ae908
+digit8 best checkpoint SHA: f70e0ba8e8585414f499f8ae2cc54e9061923983ea444ca62117e5faa5822a39
+digit8 final checkpoint SHA: 2812c1c336c14d8cb58bb02638592499d0bc018fb6628287d73e10a5dfa445ce
 source repository HEAD: ee5a1900a33f8a8b7921fd9fc5b09aeed6600925
 ```
 
-### 5.2 两臂
+### 5.2 四臂
 
-| arm | learning rate | source | target |
-|---|---:|---:|---:|
-| `lr1e3` | 0.001 | 6000 | 8000 |
-| `lr3e4` | 0.0003 | 6000 | 8000 |
+| digit | arm | learning rate | source | target |
+|---:|---|---:|---:|---:|
+| 0 | `lr1e3` | 0.001 | 6000 | 8000 |
+| 0 | `lr3e4` | 0.0003 | 6000 | 8000 |
+| 8 | `lr1e3` | 0.001 | 6000 | 8000 |
+| 8 | `lr3e4` | 0.0003 | 6000 | 8000 |
 
 冻结：
 
@@ -426,19 +430,20 @@ seed=42
 direction=0
 delay=50
 fixed_target_no_early_stop=true
+synchronized_parallel_arms=4
 ```
 
-两臂必须从同一 final@6000 恢复 model、Adam moments、condition counts、validation history 及 Python/NumPy/Torch RNG；恢复 optimizer 后只覆盖 param-group LR。source best 只用于维持 0→8000 三连选择历史，绝不作为恢复状态。
+每个数字的两臂必须从该数字同一 final@6000 恢复 model、Adam moments、condition counts、validation history 及 Python/NumPy/Torch RNG；恢复 optimizer 后只覆盖 param-group LR。source best 只用于维持 0→8000 三连选择历史，绝不作为恢复状态。
 
 不得加入旧消融的 `1e-4`，不得停止在 7000，不得读取 `o3_digit8` checkpoint。
 
 ### 5.3 选择与解释
 
-沿用完整 0→8000 历史的三连续通过规则。两臂并列报告，不自动选胜。
+沿用完整 0→8000 历史的三连续通过规则。每个数字的两臂并列报告，四臂之间不自动选胜。
 
 | 结果 | 允许的诊断解释 |
 |---|---|
-| 两臂都 `STABLE_PASS` | 6000 训练边界不足 |
+| 某数字两臂都 `STABLE_PASS` | 该数字的 6000 训练边界不足 |
 | 仅 `lr1e3` 稳定 | 主要是训练长度，不支持降 LR |
 | 仅 `lr3e4` 稳定 | 学习率/优化稳定性是重要因素 |
 | 两臂继续压缩且 endpoint 失败 | 简单训练长度/LR解释被削弱，支持结构性 phase/loss/dynamics 机制 |
@@ -448,16 +453,16 @@ Stage B 完成后不得自动再续跑、增加第三 LR、第二种子、改变
 
 ### 5.4 实现隔离
 
-建议新增独立入口：
+Stage B 当前实现：
 
 ```text
-digit_writing/protocol3_digit8_v3_lr_continuation.py
-configurations/digit_writing_original_protocol3_digit8_v3_lr_continuation_6000_to8000.json
-server/run_digit_writing_original_protocol3_digit8_v3_lr_continuation_parallel.sh
-tests/test_protocol3_digit8_v3_lr_continuation.py
+digit_writing/protocol3_corner_ease_lr_continuation.py
+configurations/digit_writing_original_protocol3_digit0_digit8_matched_lr_continuation_6000_to8000.json
+server/run_digit_writing_original_protocol3_digit0_digit8_matched_lr_continuation_parallel.sh
+tests/test_protocol3_digit0_digit8_matched_lr_continuation.py
 ```
 
-不得修改或复用旧 `protocol3_digit8_lr_ablation.py` 的 6000→7000/三臂身份，也不得改变已封存的六数字 continuation 入口。新模块复用现有 checkpoint validation、正式训练 continuation、`select_validation_history` 和 best audit，不复制训练循环。
+不得修改或复用旧 `protocol3_digit8_lr_ablation.py` 的 6000→7000/三臂身份。现有 continuation 引擎只增加严格配置驱动的 0/8 四臂路径，原六数字配置、数字范围、输出和决策边界保持不变；复用 checkpoint validation、正式训练 continuation、`select_validation_history` 和 best audit，不复制训练循环。
 
 ## 6. 输出隔离
 
@@ -490,11 +495,13 @@ runs/digit_writing_original_protocol3/
 ```text
 runs/digit_writing_original_protocol3/
   scale2p50/ref100/corner_ease_v3/
-    digit8_v3_lr_continuation_from6000_to8000/
-      lr1e3/
-      lr3e4/
-      digit8_v3_lr_comparison.csv
-      DIGIT8_V3_LR_CONTINUATION_REPORT.md
+    digit0_digit8_matched_lr_continuation_from6000_to8000/
+      digit0/lr1e3/
+      digit0/lr3e4/
+      digit8/lr1e3/
+      digit8/lr3e4/
+      digit0_digit8_lr_comparison.csv
+      DIGIT0_DIGIT8_MATCHED_LR_CONTINUATION_REPORT.md
       SHA256SUMS
 ```
 
@@ -525,16 +532,16 @@ runs/digit_writing_original_protocol3/
 
 ### 7.2 Stage B 必要测试
 
-1. source 必须为当前 v3 digit8，不接受 `o3_digit8`；
+1. source 必须为当前 v3 digit0 和 digit8，不接受旧 continuation 或 `o3_digit8`；
 2. best/final/summary SHA 精确匹配；
 3. final@6000 恢复 model、optimizer、RNG、counts、history；
-4. 两臂只允许 LR 不同；
+4. 每个数字的两臂只允许 LR 不同，四臂在同一 runner 并行启动；
 5. validation updates 严格为 6100..8000；
 6. 0..6000 history 逐元素保持；
 7. target 精确停止 8000，无 early stop；
 8. selector 覆盖 0..8000 三连语义；
 9. source best 跨 6000 被正确保留但不作恢复状态；
-10. 不启动 1e-4、第二种子、digit0重跑或 formal full10；
+10. 不启动 1e-4、第二种子、自动改 geometry/loss 或 formal full10；
 11. output/归档已存在时拒绝覆盖；
 12. 旧 digit8 消融与六数字 continuation 测试保持不变。
 
@@ -548,7 +555,7 @@ CPU-equivalent cores >= 7
 每进程 OMP/MKL/OpenBLAS/NumExpr = 1
 ```
 
-Stage B 两臂使用两个独立单线程进程。Stage A 与 Stage B 不并行，也不与其他训练共享同一输出或修改中的仓库。
+Stage B 四臂使用四个独立单线程进程并行启动，要求 `nproc >= 4` 且 CPU-equivalent cores >= 4。Stage A 与 Stage B 不并行，也不与其他训练共享同一输出或修改中的仓库。
 
 统一启动前门禁：
 
@@ -568,7 +575,7 @@ Stage B 两臂使用两个独立单线程进程。Stage A 与 Stage B 不并行�
 Plant Gate 不属于当前最小实验。只有同时满足以下条件才值得另行设计：
 
 1. Stage A 显示 hidden phase 可区分且正则梯度不构成主要冲突；
-2. Stage B 两臂均继续以相同形态失败；
+2. Stage B 中 digit0/digit8 各自两臂均继续以相同形态失败；
 3. 错误集中在 digit8 高加速度/jerk区域或 digit0固定方向区间；
 4. 用户明确授权独立 MotorNet 可行性诊断。
 
@@ -589,10 +596,10 @@ Stage A 完成必须回答：
 
 Stage B 完成必须回答：
 
-1. digit8 两臂的完整状态、best update和三项行为指标；
-2. 6000→8000每臂20个验证点及稳定区间；
-3. 两臂 final 和 best overlay；
-4. 训练长度/LR解释是否成立；
+1. digit0 和 digit8 四臂的完整状态、best update和三项行为指标；
+2. 6000→8000 每臂 20 个验证点及稳定区间；
+3. 四臂 final checkpoint/metrics 和 best overlay；
+4. 对每个数字，训练长度/LR解释是否成立；
 5. 是否仍需 Plant Gate。
 
 允许的最终结论仅为：
@@ -611,14 +618,12 @@ evidence insufficient
 ## 11. Codex 后续实施顺序
 
 ```text
-1. 实现 Stage A 独立只读模块、配置和测试
-2. 静态审查全部来源SHA与输出隔离
-3. 提交正式 Protocol3 implementation HEAD
-4. 准备 GitHub 协作和服务器只读 runner
-5. 用户执行 Stage A，下载归档
-6. 本地只读验收并人工复核
-7. 只有 Stage A 支持时，实现/提交 Stage B
-8. 用户另行明确授权 Stage B 训练
-9. 下载并人工比较 digit0/8 的匹配LR证据
-10. 强制暂停，不自动进入修复或 Plant Gate
+1. Stage A 独立只读模块、配置、测试和服务器执行已完成
+2. Stage A 归档已完成本地只读验收和人工复核
+3. 用户已明确授权设计 digit0/digit8 Stage B 同步训练
+4. 实现并静态审查 Stage B 四臂配置、复用引擎、测试和并行 runner
+5. 提交并推送正式 Protocol3 Stage B implementation HEAD
+6. 用户通过 GitHub 在服务器启动四臂训练
+7. 下载并人工比较 digit0/8 的匹配 LR 证据
+8. 强制暂停，不自动进入修复、第二种子、formal full10 或 Plant Gate
 ```

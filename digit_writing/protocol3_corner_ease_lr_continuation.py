@@ -28,9 +28,13 @@ from digit_writing.protocol3_corner_ease import (
 SOURCE_UPDATES = 6000
 TARGET_UPDATES = 8000
 VALIDATION_INTERVAL = 100
+SOURCE_REPOSITORY_HEAD = "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
 CASE_DIGITS = (0, 3, 4, 5, 6, 7)
+JOINT_CASE_DIGITS = (0, 8)
 ARM_LABELS = ("lr1e3", "lr3e4")
 ARM_LEARNING_RATES = (0.001, 0.0003)
+JOINT_RUN_KIND = "protocol3_digit0_digit8_matched_lr_continuation"
+JOINT_VARIANT = "digit0_digit8_four_arm_from6000_to8000"
 
 
 def _read_json(path: str | Path) -> dict[str, Any]:
@@ -72,14 +76,45 @@ def _arm_run_label(digit: int, arm_label: str) -> str:
     return f"digit{digit}_{arm_label}"
 
 
+def _is_joint_config(config: Mapping[str, Any]) -> bool:
+    return config.get("run_kind") == JOINT_RUN_KIND
+
+
+def _case_digits(config: Mapping[str, Any]) -> tuple[int, ...]:
+    return JOINT_CASE_DIGITS if _is_joint_config(config) else CASE_DIGITS
+
+
+def _output_names(config: Mapping[str, Any]) -> dict[str, str]:
+    if _is_joint_config(config):
+        return {
+            "comparison": "digit0_digit8_lr_comparison.csv",
+            "summary": "digit0_digit8_matched_lr_continuation_summary.json",
+            "report": "DIGIT0_DIGIT8_MATCHED_LR_CONTINUATION_REPORT.md",
+        }
+    return {
+        "comparison": "six_digit_lr_comparison.csv",
+        "summary": "corner_ease_lr_continuation_summary.json",
+        "report": "CORNER_EASE_LR_CONTINUATION_REPORT.md",
+    }
+
+
 def load_continuation_config(path: str | Path) -> dict[str, Any]:
     config = _read_json(path)
     if config.get("protocol") != "digit_writing_original_protocol3":
         raise ValueError("corner-ease continuation requires Protocol3")
-    if config.get("run_kind") != "protocol3_corner_ease_lr_continuation":
+    run_kind = config.get("run_kind")
+    if run_kind not in (
+        "protocol3_corner_ease_lr_continuation",
+        JOINT_RUN_KIND,
+    ):
         raise ValueError("corner-ease continuation run kind is invalid")
-    if config.get("variant") != "six_digit_lr_control_from6000_to8000":
+    joint = _is_joint_config(config)
+    expected_variant = (
+        JOINT_VARIANT if joint else "six_digit_lr_control_from6000_to8000"
+    )
+    if config.get("variant") != expected_variant:
         raise ValueError("corner-ease continuation variant is invalid")
+    digits = _case_digits(config)
     source = config["source"]
     expected_source_paths = {
         "protocol_config": (
@@ -98,20 +133,20 @@ def load_continuation_config(path: str | Path) -> dict[str, Any]:
     for name, expected in expected_source_paths.items():
         if source.get(name) != expected:
             raise ValueError(f"corner-ease continuation source {name} changed")
-    if len(source.get("repository_head", "")) != 40:
-        raise ValueError("corner-ease continuation source HEAD is invalid")
+    if source.get("repository_head") != SOURCE_REPOSITORY_HEAD:
+        raise ValueError("corner-ease continuation source HEAD changed")
     if int(source.get("completed_updates", -1)) != SOURCE_UPDATES:
         raise ValueError("corner-ease continuation source update changed")
     source_cases = source.get("cases", [])
-    if tuple(int(row.get("digit", -1)) for row in source_cases) != CASE_DIGITS:
+    if tuple(int(row.get("digit", -1)) for row in source_cases) != digits:
         raise ValueError("corner-ease continuation digit scope changed")
     if tuple(row.get("label") for row in source_cases) != tuple(
-        _case_label(digit) for digit in CASE_DIGITS
+        _case_label(digit) for digit in digits
     ):
         raise ValueError("corner-ease continuation case labels changed")
     for row in source_cases:
         if row.get("source_status") != "PASS_UNSTABLE":
-            raise ValueError("only the six frozen unstable cases may continue")
+            raise ValueError("only the frozen unstable cases may continue")
         for name in (
             "best_checkpoint_sha256",
             "final_checkpoint_sha256",
@@ -133,26 +168,46 @@ def load_continuation_config(path: str | Path) -> dict[str, Any]:
         ARM_LEARNING_RATES
     ):
         raise ValueError("corner-ease continuation learning rates changed")
-    if config.get("training") != {
+    expected_training = {
         "target_completed_updates": TARGET_UPDATES,
         "additional_updates": TARGET_UPDATES - SOURCE_UPDATES,
         "validation_interval": VALIDATION_INTERVAL,
         "batch_size": 8,
         "fixed_target_no_early_stop": True,
-    }:
+    }
+    if joint:
+        expected_training["synchronized_parallel_arms"] = 4
+    if config.get("training") != expected_training:
         raise ValueError("corner-ease continuation training schedule changed")
-    if config.get("decision") != {
+    expected_decision = {
         "automatic_winner_selection": False,
         "automatic_further_continuation": False,
         "automatic_second_seed": False,
-        "digit8_included": False,
+        "digit8_included": joint,
         "formal_full10_start": False,
         "qualitative_overlay_review_required": True,
-    }:
+    }
+    if joint:
+        expected_decision.update(
+            {
+                "automatic_geometry_change": False,
+                "automatic_loss_change": False,
+                "synchronized_parallel_training": True,
+            }
+        )
+    if config.get("decision") != expected_decision:
         raise ValueError("corner-ease continuation decision boundary changed")
     expected_output = (
-        "runs/digit_writing_original_protocol3/scale2p50/ref100/"
-        "corner_ease_v3/lr_continuation_from6000_to8000"
+        (
+            "runs/digit_writing_original_protocol3/scale2p50/ref100/"
+            "corner_ease_v3/"
+            "digit0_digit8_matched_lr_continuation_from6000_to8000"
+        )
+        if joint
+        else (
+            "runs/digit_writing_original_protocol3/scale2p50/ref100/"
+            "corner_ease_v3/lr_continuation_from6000_to8000"
+        )
     )
     if config.get("output") != {"directory": expected_output}:
         raise ValueError("corner-ease continuation output identity changed")
@@ -353,6 +408,7 @@ def prepare_continuation(
 ) -> dict[str, Any]:
     root = Path(repository_root).resolve()
     config = load_continuation_config(continuation_config_path)
+    digits = _case_digits(config)
     output = Path(run_root).resolve()
     if output != _resolve_inside(root, config["output"]["directory"]):
         raise ValueError("corner-ease continuation run root changed")
@@ -379,7 +435,7 @@ def prepare_continuation(
             source_run_root=source_run_root,
             case_label=_case_label(digit),
         )
-        for digit in CASE_DIGITS
+        for digit in digits
     ]
     output.mkdir(parents=True)
     _write_json(output / "continuation_config.json", config)
@@ -387,12 +443,13 @@ def prepare_continuation(
         output / "source_review.json",
         {
             "protocol": config["protocol"],
-            "run_kind": "protocol3_corner_ease_lr_continuation_source_review",
+            "run_kind": f"{config['run_kind']}_source_review",
             "source_repository_head": config["source"]["repository_head"],
             "current_repository_head": reviews[0]["current_repository_head"],
             "cases": reviews,
             "eligible_cases": len(reviews),
-            "digit8_included": False,
+            "digit8_included": 8 in digits,
+            "synchronized_parallel_training": _is_joint_config(config),
             "passed": True,
         },
     )
@@ -549,7 +606,7 @@ def run_continuation_arm(
     )
     result = {
         "protocol": config["protocol"],
-        "run_kind": "protocol3_corner_ease_lr_continuation_arm",
+        "run_kind": f"{config['run_kind']}_arm",
         "case": case,
         "arm": arm,
         "arm_run_label": arm_run_label,
@@ -577,7 +634,10 @@ def run_continuation_arm(
         "automatic_winner_selection_started": False,
         "automatic_further_continuation_started": False,
         "automatic_second_seed_started": False,
-        "digit8_started": False,
+        "digit8_started": digit == 8,
+        "synchronized_parallel_training": _is_joint_config(config),
+        "automatic_geometry_change_started": False,
+        "automatic_loss_change_started": False,
         "formal_full10_started": False,
     }
     _write_json(output / "run_summary.json", result)
@@ -606,11 +666,13 @@ def summarize_continuation(
 ) -> dict[str, Any]:
     root = Path(repository_root).resolve()
     config = load_continuation_config(continuation_config_path)
+    digits = _case_digits(config)
+    output_names = _output_names(config)
     output = Path(run_root).resolve()
     if output != _resolve_inside(root, config["output"]["directory"]):
         raise ValueError("corner-ease continuation summary root changed")
     results = []
-    for digit in CASE_DIGITS:
+    for digit in digits:
         for arm_label in ARM_LABELS:
             results.append(
                 _read_json(
@@ -622,16 +684,19 @@ def summarize_continuation(
             )
     expected_labels = [
         _arm_run_label(digit, arm)
-        for digit in CASE_DIGITS
+        for digit in digits
         for arm in ARM_LABELS
     ]
     if [row.get("arm_run_label") for row in results] != expected_labels:
         raise RuntimeError("corner-ease continuation arms are incomplete or reordered")
     if any(int(row.get("completed_updates", -1)) != TARGET_UPDATES for row in results):
         raise RuntimeError("one or more continuation arms did not reach update 8000")
+    current_identity = current_git_identity(root)
+    if any(row.get("git_identity") != current_identity for row in results):
+        raise RuntimeError("continuation arm implementation Git identity differs")
     engineering_passed = all(row.get("engineering_passed") is True for row in results)
     comparison_rows = []
-    for digit in CASE_DIGITS:
+    for digit in digits:
         control, lower = [
             row for row in results if int(row["case"]["digit"]) == digit
         ]
@@ -661,17 +726,17 @@ def summarize_continuation(
                 "lr3e4_engineering_passed": lower["engineering_passed"],
             }
         )
-    _write_csv(output / "six_digit_lr_comparison.csv", comparison_rows)
+    _write_csv(output / output_names["comparison"], comparison_rows)
     summary = {
         "protocol": config["protocol"],
         "run_kind": config["run_kind"],
         "variant": config["variant"],
         "source_repository_head": config["source"]["repository_head"],
-        "current_repository_head": results[0]["git_identity"]["repository_head"],
+        "current_repository_head": current_identity["repository_head"],
         "source_completed_updates": SOURCE_UPDATES,
         "completed_updates": TARGET_UPDATES,
         "additional_updates_per_arm": TARGET_UPDATES - SOURCE_UPDATES,
-        "digits": list(CASE_DIGITS),
+        "digits": list(digits),
         "arms": results,
         "comparisons": comparison_rows,
         "completed_arms": len(results),
@@ -684,15 +749,29 @@ def summarize_continuation(
         "automatic_winner_selection": False,
         "automatic_further_continuation": False,
         "automatic_second_seed": False,
-        "digit8_included": False,
+        "digit8_included": 8 in digits,
+        "synchronized_parallel_training": _is_joint_config(config),
+        "automatic_geometry_change": False,
+        "automatic_loss_change": False,
         "formal_full10_started": False,
         "passed": False,
     }
-    _write_json(output / "corner_ease_lr_continuation_summary.json", summary)
+    _write_json(output / output_names["summary"], summary)
+    title = (
+        "# Protocol3 digit0 / digit8 matched LR continuation report"
+        if _is_joint_config(config)
+        else "# Protocol3 corner-ease LR continuation report"
+    )
+    scope_line = (
+        "Digits 0 and 8 each resumed in two independent synchronized arms "
+        "from state-complete final@6000 to 8000."
+        if _is_joint_config(config)
+        else "Six PASS_UNSTABLE digits resumed from state-complete final@6000 to 8000."
+    )
     lines = [
-        "# Protocol3 corner-ease LR continuation report",
+        title,
         "",
-        "Six PASS_UNSTABLE digits resumed from state-complete final@6000 to 8000.",
+        scope_line,
         "The original 1e-3 rate is retained as a control against 3e-4.",
         "No arm is selected automatically.",
         "",
@@ -711,13 +790,22 @@ def summarize_continuation(
         [
             "",
             "Negative deltas favor 3e-4. Status, metrics and overlays require manual review together.",
-            "Digit 8, second seeds, further continuation and formal full10 were not started.",
+            (
+                "Second seeds, further continuation, geometry/loss changes and "
+                "formal full10 were not started."
+                if _is_joint_config(config)
+                else (
+                    "Digit 8, second seeds, further continuation and formal "
+                    "full10 were not started."
+                )
+            ),
             "",
         ]
     )
-    (output / "CORNER_EASE_LR_CONTINUATION_REPORT.md").write_text(
-        "\n".join(lines), encoding="utf-8", newline="\n"
-    )
+    with (output / output_names["report"]).open(
+        "w", encoding="utf-8", newline="\n"
+    ) as handle:
+        handle.write("\n".join(lines))
     return summary
 
 
@@ -782,7 +870,13 @@ def main() -> None:
     print("AUTOMATIC_WINNER_SELECTION_STARTED=0")
     print("AUTOMATIC_FURTHER_CONTINUATION_STARTED=0")
     print("AUTOMATIC_SECOND_SEED_STARTED=0")
-    print("DIGIT8_STARTED=0")
+    print(f"DIGIT8_STARTED={int(result['digit8_included'])}")
+    print(
+        "SYNCHRONIZED_PARALLEL_TRAINING="
+        f"{int(result['synchronized_parallel_training'])}"
+    )
+    print("AUTOMATIC_GEOMETRY_CHANGE_STARTED=0")
+    print("AUTOMATIC_LOSS_CHANGE_STARTED=0")
     print("FORMAL_FULL10_STARTED=0")
 
 

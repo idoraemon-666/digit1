@@ -1,0 +1,62 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_digit0_digit8_matched_lr_continuation",
+  "variant": "digit0_digit8_four_arm_from6000_to8000",
+  "source": {
+    "protocol_config": "configurations/digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v3.json",
+    "output_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/single_digit_overfit",
+    "evidence_directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/single_digit_overfit_server_evidence",
+    "repository_head": "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925",
+    "completed_updates": 6000,
+    "cases": [
+      {
+        "label": "digit0_corner_ease",
+        "digit": 0,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "629e353d161281265e40d221cf5bcd30d2906db05b459f2a7be2b62efe81cff7",
+        "final_checkpoint_sha256": "fd4c42c7a5ee546ccdc65615df2648379fdc1b36f36dbe0d918de5ed476ae908",
+        "run_summary_sha256": "0df65f909782fab0fcd8a1fbcda90511720a451ce9112a18aebbd63070efc65a"
+      },
+      {
+        "label": "digit8_corner_ease",
+        "digit": 8,
+        "source_status": "PASS_UNSTABLE",
+        "best_checkpoint_sha256": "f70e0ba8e8585414f499f8ae2cc54e9061923983ea444ca62117e5faa5822a39",
+        "final_checkpoint_sha256": "2812c1c336c14d8cb58bb02638592499d0bc018fb6628287d73e10a5dfa445ce",
+        "run_summary_sha256": "15df42d78db01d52a802f7dcf10c6a8661c342d04c6ade5e30e32fe61817a5b1"
+      }
+    ]
+  },
+  "optimizer": {
+    "name": "Adam",
+    "source_learning_rate": 0.001,
+    "restore_optimizer_state": true,
+    "override_only_param_group_learning_rate": true
+  },
+  "arms": [
+    {"label": "lr1e3", "learning_rate": 0.001},
+    {"label": "lr3e4", "learning_rate": 0.0003}
+  ],
+  "training": {
+    "target_completed_updates": 8000,
+    "additional_updates": 2000,
+    "validation_interval": 100,
+    "batch_size": 8,
+    "fixed_target_no_early_stop": true,
+    "synchronized_parallel_arms": 4
+  },
+  "decision": {
+    "automatic_winner_selection": false,
+    "automatic_further_continuation": false,
+    "automatic_second_seed": false,
+    "digit8_included": true,
+    "formal_full10_start": false,
+    "qualitative_overlay_review_required": true,
+    "automatic_geometry_change": false,
+    "automatic_loss_change": false,
+    "synchronized_parallel_training": true
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/digit0_digit8_matched_lr_continuation_from6000_to8000"
+  }
+}
