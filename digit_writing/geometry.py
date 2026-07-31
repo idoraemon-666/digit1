@@ -270,6 +270,7 @@ def _sample_corner_ease_digit(
     dt_seconds: float,
     scale_m_per_unit: float,
     selected_reference_steps: int,
+    movement_intervals_override: int | None = None,
 ) -> dict[str, object]:
     digits = build_digit_segments_units()
     if digit not in digits:
@@ -279,6 +280,26 @@ def _sample_corner_ease_digit(
         segment_intervals(segment, selected_reference_steps)
         for segment in segments
     ]
+    if movement_intervals_override is not None:
+        if (
+            isinstance(movement_intervals_override, bool)
+            or not isinstance(movement_intervals_override, int)
+        ):
+            raise TypeError("movement_intervals_override must be an integer")
+        if digit not in {0, 8} or len(segments) != 1:
+            raise ValueError(
+                "movement interval override is restricted to the one-primitive "
+                "Protocol3 digit0/digit8 timing diagnostic"
+            )
+        allowed_intervals = {
+            0: {170, 200, 220},
+            8: {200, 220, 240},
+        }
+        if movement_intervals_override not in allowed_intervals[digit]:
+            raise ValueError(
+                "movement interval override is outside the frozen digit arm"
+            )
+        base_intervals = [movement_intervals_override]
     dense_segments_m = [
         segment.points_m(scale_m_per_unit) for segment in segments
     ]
@@ -380,7 +401,12 @@ def _sample_final(
     scale_m_per_unit: float,
     timing_mode: str,
     selected_reference_steps: int | None,
+    movement_intervals_override: int | None,
 ) -> dict[str, object]:
+    if movement_intervals_override is not None and timing_mode != CORNER_EASE_TIMING:
+        raise ValueError(
+            "movement interval override requires Protocol3 corner-ease timing"
+        )
     if timing_mode == PHYSICAL_SPEED_ARCLENGTH:
         result = sample_digit(
             digit,
@@ -406,6 +432,7 @@ def _sample_final(
             dt_seconds=dt_seconds,
             scale_m_per_unit=scale_m_per_unit,
             selected_reference_steps=selected_reference_steps,
+            movement_intervals_override=movement_intervals_override,
         )
     else:
         raise ValueError(f"unsupported timing_mode: {timing_mode}")
@@ -422,6 +449,7 @@ def build_digit_trajectory(
     *,
     spatial_angle_rad: float = 0.0,
     anchor: Sequence[float] = (0.0, 0.0),
+    movement_intervals_override: int | None = None,
 ) -> DigitTrajectory:
     anchor_array = np.asarray(anchor, dtype=np.float64)
     if anchor_array.shape != (2,):
@@ -442,6 +470,7 @@ def build_digit_trajectory(
         config.global_scale_m_per_unit,
         config.timing_mode,
         config.selected_reference_steps,
+        movement_intervals_override,
     )
     local_points = np.asarray(sampled["path_m"], dtype=np.float64)
     points = _rotate(local_points, spatial_angle_rad) + anchor_array

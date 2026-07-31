@@ -1,0 +1,106 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_digit0_digit8_movement_interval_lr_scratch",
+  "variant": "digit0_digit8_twelve_arm_interval_lr_scratch6000",
+  "seed": 42,
+  "validation_seed": 1042,
+  "device": "cpu",
+  "geometry_config": "configurations/digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v3.json",
+  "source_protocol_config": "configurations/digit_writing_original_protocol3_ten_digit_corner_ease_overfit_v3.json",
+  "scale_multiplier": 2.5,
+  "source_timing_mode": "fixed_segment_timing_corner_ease_v3",
+  "selected_reference_steps": 100,
+  "condition_schedule": "protocol3_corner_ease_single_condition",
+  "digits": [0, 8],
+  "source_movement_intervals": {"0": 170, "8": 200},
+  "movement_interval_arms": {"0": [170, 200, 220], "8": [200, 220, 240]},
+  "learning_rate_arms": [
+    {"label": "lr1e3", "learning_rate": 0.001},
+    {"label": "lr3e4", "learning_rate": 0.0003}
+  ],
+  "arms": [
+    {"label": "digit0_time170_lr1e3", "digit": 0, "movement_intervals": 170, "learning_rate_label": "lr1e3", "learning_rate": 0.001, "output_subdirectory": "digit0/time170/lr1e3"},
+    {"label": "digit0_time200_lr1e3", "digit": 0, "movement_intervals": 200, "learning_rate_label": "lr1e3", "learning_rate": 0.001, "output_subdirectory": "digit0/time200/lr1e3"},
+    {"label": "digit0_time220_lr1e3", "digit": 0, "movement_intervals": 220, "learning_rate_label": "lr1e3", "learning_rate": 0.001, "output_subdirectory": "digit0/time220/lr1e3"},
+    {"label": "digit8_time200_lr1e3", "digit": 8, "movement_intervals": 200, "learning_rate_label": "lr1e3", "learning_rate": 0.001, "output_subdirectory": "digit8/time200/lr1e3"},
+    {"label": "digit8_time220_lr1e3", "digit": 8, "movement_intervals": 220, "learning_rate_label": "lr1e3", "learning_rate": 0.001, "output_subdirectory": "digit8/time220/lr1e3"},
+    {"label": "digit8_time240_lr1e3", "digit": 8, "movement_intervals": 240, "learning_rate_label": "lr1e3", "learning_rate": 0.001, "output_subdirectory": "digit8/time240/lr1e3"},
+    {"label": "digit0_time170_lr3e4", "digit": 0, "movement_intervals": 170, "learning_rate_label": "lr3e4", "learning_rate": 0.0003, "output_subdirectory": "digit0/time170/lr3e4"},
+    {"label": "digit0_time200_lr3e4", "digit": 0, "movement_intervals": 200, "learning_rate_label": "lr3e4", "learning_rate": 0.0003, "output_subdirectory": "digit0/time200/lr3e4"},
+    {"label": "digit0_time220_lr3e4", "digit": 0, "movement_intervals": 220, "learning_rate_label": "lr3e4", "learning_rate": 0.0003, "output_subdirectory": "digit0/time220/lr3e4"},
+    {"label": "digit8_time200_lr3e4", "digit": 8, "movement_intervals": 200, "learning_rate_label": "lr3e4", "learning_rate": 0.0003, "output_subdirectory": "digit8/time200/lr3e4"},
+    {"label": "digit8_time220_lr3e4", "digit": 8, "movement_intervals": 220, "learning_rate_label": "lr3e4", "learning_rate": 0.0003, "output_subdirectory": "digit8/time220/lr3e4"},
+    {"label": "digit8_time240_lr3e4", "digit": 8, "movement_intervals": 240, "learning_rate_label": "lr3e4", "learning_rate": 0.0003, "output_subdirectory": "digit8/time240/lr3e4"}
+  ],
+  "model": {
+    "network": "rnn",
+    "input_size": 28,
+    "hidden_size": 256,
+    "output_size": 6,
+    "activation": "softplus",
+    "recurrent_noise_std": 0.1,
+    "input_noise_std": 0.01,
+    "constrained": false,
+    "rnn_dt_ms": 10,
+    "rnn_tau_ms": 20,
+    "batch_first": true
+  },
+  "optimizer": {
+    "name": "Adam",
+    "grad_clip_norm": 1.0,
+    "fixed_learning_rate_no_schedule": true
+  },
+  "training": {
+    "batch_size": 8,
+    "max_updates": 6000,
+    "validation_interval": 100,
+    "from_scratch": true,
+    "early_stopping": false,
+    "synchronized_parallel_arms": 12
+  },
+  "position_loss": {
+    "type": "phase_normalized_l1",
+    "stable_weight": 0.1,
+    "delay_weight": 0.1,
+    "movement_weight": 0.6,
+    "hold_weight": 0.2
+  },
+  "regularization": {
+    "l1_rate": 0.001,
+    "l1_weight": 0.001,
+    "l1_muscle_act": 0.01,
+    "simple_dynamics_weight": 0.001
+  },
+  "timing_intervention": {
+    "method": "single_primitive_linear_arclength_resample",
+    "dt_seconds": 0.01,
+    "stable_steps": 25,
+    "delay_steps": 50,
+    "hold_steps": 25,
+    "spatial_geometry_unchanged": true,
+    "speed_cue_unchanged": true,
+    "digit0_time170_is_original_control": true,
+    "digit8_time200_is_original_control": true
+  },
+  "checkpoint_selection": {
+    "stable_consecutive_evaluations": 3,
+    "primary_metric": "normalized_mean_error",
+    "tie_break": "earlier_update"
+  },
+  "decision": {
+    "automatic_interval_selection": false,
+    "automatic_learning_rate_selection": false,
+    "automatic_continuation": false,
+    "automatic_second_seed": false,
+    "automatic_loss_change": false,
+    "automatic_geometry_change": false,
+    "formal_full10_start": false,
+    "qualitative_overlay_review_required": true
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/digit0_digit8_movement_interval_lr_scratch6000",
+    "initial_checkpoint": "initial_checkpoint.pt",
+    "best_checkpoint": "best_checkpoint.pt",
+    "final_checkpoint": "final_checkpoint.pt"
+  }
+}

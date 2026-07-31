@@ -37,11 +37,20 @@ class DigitWritingEnv(env.Environment):
         *args: Any,
         geometry_config_path: str | Path = DEFAULT_GEOMETRY_CONFIG,
         corner_settle_intervals: int | None = None,
+        movement_intervals_override: int | None = None,
         **kwargs: Any,
     ) -> None:
         self.geometry_config_path = Path(geometry_config_path)
         self.geometry_config = load_geometry_config(self.geometry_config_path)
         self.corner_settle_intervals = corner_settle_intervals
+        self.movement_intervals_override = movement_intervals_override
+        if (
+            self.corner_settle_intervals is not None
+            and self.movement_intervals_override is not None
+        ):
+            raise ValueError(
+                "corner settle and movement interval override cannot be combined"
+            )
         self.corner_records = None
         super().__init__(*args, **kwargs)
         if self.action_frame_stacking != 0:
@@ -168,6 +177,7 @@ class DigitWritingEnv(env.Environment):
                     self.reference_steps,
                     spatial_angle_rad=float(angle),
                     anchor=fingertip_numpy[batch_index],
+                    movement_intervals_override=self.movement_intervals_override,
                 )
             else:
                 trajectory = build_corner_settle_trajectory(
