@@ -75,6 +75,10 @@ DIGIT_ENV_CLASSES = (
 )
 FULL10_DIGITS = tuple(range(10))
 HELDOUT5_DIGITS = tuple(digit for digit in FULL10_DIGITS if digit != 5)
+PROTOCOL3_CORNER_EASE_CONTINUATION_DIGITS = {
+    "protocol3_corner_ease_lr_continuation": (0, 3, 4, 5, 6, 7),
+    "protocol3_digit0_digit8_matched_lr_continuation": (0, 8),
+}
 
 
 def _build_policy(hp, output_dim, device):
@@ -1061,9 +1065,13 @@ def train_subsets_base_model(
         "digit8_medium_lr1e4": 0.0001,
     }
     experimental_run_kind = hp.get("experimental_run_kind")
+    corner_ease_lr_continuation_digits = (
+        PROTOCOL3_CORNER_EASE_CONTINUATION_DIGITS.get(
+            experimental_run_kind
+        )
+    )
     corner_ease_lr_continuation = (
-        experimental_run_kind
-        == "protocol3_corner_ease_lr_continuation"
+        corner_ease_lr_continuation_digits is not None
     )
     if (
         experimental_resume_learning_rate is not None
@@ -1113,7 +1121,7 @@ def train_subsets_base_model(
         if (
             resume_learning_rate not in (0.001, 0.0003)
             or not corner_ease_selection
-            or int(fixed_digit) not in (0, 3, 4, 5, 6, 7)
+            or int(fixed_digit) not in corner_ease_lr_continuation_digits
             or hp.get("experimental_lr_ablation_arm") != expected_arm
             or float(hp.get("experimental_source_learning_rate", -1.0))
             != 0.001

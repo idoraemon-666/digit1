@@ -1,4 +1,5 @@
 import copy
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -160,9 +161,28 @@ class Protocol3Digit0Digit8MatchedContinuationTests(unittest.TestCase):
         self.assertIn("DIGIT8_STARTED=1", script)
         self.assertIn("matched continuation prepare failed", script)
         self.assertIn("matched continuation summarize failed", script)
+        self.assertIn("===== FAILED ARM digit${DIGIT}/${ARM} =====", script)
         self.assertNotIn("digit3_corner_ease", script)
         self.assertNotIn("lr1e4", script)
         self.assertNotIn("protocol3_digit8_lr_ablation run", script)
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("motornet")
+    and importlib.util.find_spec("configargparse"),
+    "MotorNet integration dependencies are server-only",
+)
+class Protocol3Digit0Digit8TrainingGateTests(unittest.TestCase):
+    def test_joint_run_kind_and_digit_scope_are_accepted_by_training(self):
+        from train import PROTOCOL3_CORNER_EASE_CONTINUATION_DIGITS
+
+        self.assertEqual(
+            PROTOCOL3_CORNER_EASE_CONTINUATION_DIGITS,
+            {
+                "protocol3_corner_ease_lr_continuation": (0, 3, 4, 5, 6, 7),
+                JOINT_RUN_KIND: JOINT_CASE_DIGITS,
+            },
+        )
 
 
 if __name__ == "__main__":

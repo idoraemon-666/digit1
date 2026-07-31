@@ -466,6 +466,8 @@ tests/test_protocol3_digit0_digit8_matched_lr_continuation.py
 
 不得修改或复用旧 `protocol3_digit8_lr_ablation.py` 的 6000→7000/三臂身份。现有 continuation 引擎只增加严格配置驱动的 0/8 四臂路径，原六数字配置、数字范围、输出和决策边界保持不变；复用 checkpoint validation、正式训练 continuation、`select_validation_history` 和 best audit，不复制训练循环。
 
+`train.py` 的正式 resume 前门禁必须把 joint run kind 精确映射到 `(0, 8)`，同时保持旧六数字 run kind 的 `(0, 3, 4, 5, 6, 7)` 白名单不变；不得用放宽到任意数字或任意 run kind 的方式绕过身份校验。
+
 ## 6. 输出隔离
 
 ### 6.1 Stage A

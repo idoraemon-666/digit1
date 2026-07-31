@@ -233,6 +233,16 @@ for INDEX in "${!PIDS[@]}"; do
 done
 if [[ "$FAILED" -ne 0 ]]; then
   echo "ABORT: one or more matched continuation arms failed; outputs are preserved at $RUN_ROOT" >&2
+  cat "$EVIDENCE_ROOT/process_exit_codes.txt" >&2
+  for DIGIT in "${DIGITS[@]}"; do
+    for ARM in "${ARMS[@]}"; do
+      ARM_DIR="$RUN_ROOT/digit${DIGIT}/${ARM}"
+      if [[ ! -f "$ARM_DIR/run_summary.json" ]]; then
+        echo "===== FAILED ARM digit${DIGIT}/${ARM} =====" >&2
+        tail -n 80 "$ARM_DIR/run.log" >&2
+      fi
+    done
+  done
   exit 1
 fi
 
