@@ -406,8 +406,10 @@ Stage B 同步检验：digit0 和 digit8 各自是否能由训练长度或 LR �
 ```text
 digit0 best checkpoint SHA: 629e353d161281265e40d221cf5bcd30d2906db05b459f2a7be2b62efe81cff7
 digit0 final checkpoint SHA: fd4c42c7a5ee546ccdc65615df2648379fdc1b36f36dbe0d918de5ed476ae908
+digit0 source status: PASS_UNSTABLE
 digit8 best checkpoint SHA: f70e0ba8e8585414f499f8ae2cc54e9061923983ea444ca62117e5faa5822a39
 digit8 final checkpoint SHA: 2812c1c336c14d8cb58bb02638592499d0bc018fb6628287d73e10a5dfa445ce
+digit8 source status: FAIL
 source repository HEAD: ee5a1900a33f8a8b7921fd9fc5b09aeed6600925
 ```
 

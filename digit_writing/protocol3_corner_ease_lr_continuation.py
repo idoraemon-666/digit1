@@ -145,8 +145,12 @@ def load_continuation_config(path: str | Path) -> dict[str, Any]:
     ):
         raise ValueError("corner-ease continuation case labels changed")
     for row in source_cases:
-        if row.get("source_status") != "PASS_UNSTABLE":
-            raise ValueError("only the frozen unstable cases may continue")
+        digit = int(row["digit"])
+        expected_status = (
+            "FAIL" if joint and digit == 8 else "PASS_UNSTABLE"
+        )
+        if row.get("source_status") != expected_status:
+            raise ValueError("corner-ease continuation source status changed")
         for name in (
             "best_checkpoint_sha256",
             "final_checkpoint_sha256",

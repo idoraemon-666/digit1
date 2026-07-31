@@ -49,6 +49,13 @@ class Protocol3Digit0Digit8MatchedContinuationTests(unittest.TestCase):
             self.config["decision"]["synchronized_parallel_training"]
         )
         self.assertTrue(self.config["decision"]["digit8_included"])
+        self.assertEqual(
+            {
+                case["digit"]: case["source_status"]
+                for case in self.config["source"]["cases"]
+            },
+            {0: "PASS_UNSTABLE", 8: "FAIL"},
+        )
 
     def test_source_checkpoints_and_summaries_are_exactly_frozen(self):
         self.assertEqual(
@@ -113,6 +120,9 @@ class Protocol3Digit0Digit8MatchedContinuationTests(unittest.TestCase):
         changed["source"]["cases"].reverse()
         mutations.append(changed)
         changed = copy.deepcopy(self.config)
+        changed["source"]["cases"][1]["source_status"] = "PASS_UNSTABLE"
+        mutations.append(changed)
+        changed = copy.deepcopy(self.config)
         changed["arms"][1]["learning_rate"] = 0.0001
         mutations.append(changed)
         changed = copy.deepcopy(self.config)
@@ -148,6 +158,8 @@ class Protocol3Digit0Digit8MatchedContinuationTests(unittest.TestCase):
         self.assertIn("SYNCHRONIZED_PARALLEL_TRAINING=1", script)
         self.assertIn("DIGIT0_STARTED=1", script)
         self.assertIn("DIGIT8_STARTED=1", script)
+        self.assertIn("matched continuation prepare failed", script)
+        self.assertIn("matched continuation summarize failed", script)
         self.assertNotIn("digit3_corner_ease", script)
         self.assertNotIn("lr1e4", script)
         self.assertNotIn("protocol3_digit8_lr_ablation run", script)

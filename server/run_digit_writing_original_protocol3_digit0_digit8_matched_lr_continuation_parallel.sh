@@ -66,6 +66,10 @@ assert config["variant"] == "digit0_digit8_four_arm_from6000_to8000"
 assert config["source"]["repository_head"] == "ee5a1900a33f8a8b7921fd9fc5b09aeed6600925"
 assert config["source"]["completed_updates"] == 6000
 assert [case["digit"] for case in config["source"]["cases"]] == [0, 8]
+assert [case["source_status"] for case in config["source"]["cases"]] == [
+    "PASS_UNSTABLE",
+    "FAIL",
+]
 assert [(arm["label"], arm["learning_rate"]) for arm in config["arms"]] == [
     ("lr1e3", 0.001),
     ("lr3e4", 0.0003),
@@ -162,7 +166,7 @@ if grep -q 'skipped=' "$TEST_LOG"; then
   exit 1
 fi
 
-(
+if ! (
   cd "$REPO"
   CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
@@ -173,7 +177,11 @@ fi
       --source-run-root "$SOURCE_RUN_ROOT" \
       --source-evidence-root "$SOURCE_EVIDENCE_ROOT" \
       --run-root "$RUN_ROOT"
-) > "$EVIDENCE_ROOT/prepare.log" 2>&1
+) > "$EVIDENCE_ROOT/prepare.log" 2>&1; then
+  echo 'ABORT: matched continuation prepare failed' >&2
+  tail -n 80 "$EVIDENCE_ROOT/prepare.log" >&2
+  exit 1
+fi
 
 grep '^Ran [0-9][0-9]* tests in ' "$TEST_LOG" > "$EVIDENCE_ROOT/test_summary.txt"
 printf 'SKIPPED_TESTS=0\n' >> "$EVIDENCE_ROOT/test_summary.txt"
@@ -228,7 +236,7 @@ if [[ "$FAILED" -ne 0 ]]; then
   exit 1
 fi
 
-(
+if ! (
   cd "$REPO"
   CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
     OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
@@ -237,7 +245,11 @@ fi
       --repository-root "$REPO" \
       --continuation-config "$CONFIG" \
       --run-root "$RUN_ROOT"
-) > "$EVIDENCE_ROOT/summarize.log" 2>&1
+) > "$EVIDENCE_ROOT/summarize.log" 2>&1; then
+  echo 'ABORT: matched continuation summarize failed' >&2
+  tail -n 80 "$EVIDENCE_ROOT/summarize.log" >&2
+  exit 1
+fi
 
 "$PYTHON" - "$RUN_ROOT/digit0_digit8_matched_lr_continuation_summary.json" <<'PY'
 import json

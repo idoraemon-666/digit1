@@ -20,7 +20,7 @@
       {
         "label": "digit8_corner_ease",
         "digit": 8,
-        "source_status": "PASS_UNSTABLE",
+        "source_status": "FAIL",
         "best_checkpoint_sha256": "f70e0ba8e8585414f499f8ae2cc54e9061923983ea444ca62117e5faa5822a39",
         "final_checkpoint_sha256": "2812c1c336c14d8cb58bb02638592499d0bc018fb6628287d73e10a5dfa445ce",
         "run_summary_sha256": "15df42d78db01d52a802f7dcf10c6a8661c342d04c6ade5e30e32fe61817a5b1"
