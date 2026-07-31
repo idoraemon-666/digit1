@@ -40,6 +40,17 @@ from digit_writing.protocol3_checkpoint import (
     restore_rng_state,
     validate_protocol3_resume_checkpoint,
 )
+from digit_writing.protocol3_corner_ease_joint8 import (
+    JOINT8_DIGITS,
+    JOINT8_SCHEDULE,
+    JOINT8_TOTAL_UPDATES,
+    joint8_digit_for_update,
+    joint8_learning_rate,
+    joint8_selection_key,
+    joint8_selection_record,
+    select_joint8_validation_history,
+    validate_joint8_condition_counts,
+)
 
 DEF_HP = {
     "network": "rnn",
@@ -377,13 +388,34 @@ def _do_protocol3_eval(
 ):
     if env_dict is None:
         raise ValueError("protocol3 evaluation requires an explicit digit set")
+    joint8 = hp.get("condition_schedule") == JOINT8_SCHEDULE
     single_condition = hp.get("condition_schedule") in {
         "protocol3_gate2_single_condition",
         "protocol3_corner_settle_single_condition",
         "protocol3_corner_ease_single_condition",
     }
-    deterministic = single_condition or bool(hp.get("deterministic_evaluation", False))
-    if single_condition:
+    deterministic = joint8 or single_condition or bool(
+        hp.get("deterministic_evaluation", False)
+    )
+    if joint8:
+        cases = tuple(
+            (
+                environment_class,
+                False,
+                {
+                    "batch_size": hp["batch_size"],
+                    "reach_conds": np.full(
+                        hp["batch_size"],
+                        hp["gate2_direction_index"],
+                        dtype=np.int64,
+                    ),
+                    "speed_cond": 0,
+                    "delay_cond": hp["gate2_delay_index"],
+                },
+            )
+            for environment_class in env_dict.values()
+        )
+    elif single_condition:
         cases = (
             (
                 next(iter(env_dict.values())),
@@ -417,6 +449,7 @@ def _do_protocol3_eval(
         )
 
     totals = None
+    per_digit = {}
     for environment_class, testing, options in cases:
         metrics = _protocol3_rollout_metrics(
             policy,
@@ -431,10 +464,14 @@ def _do_protocol3_eval(
             totals = {name: 0.0 for name in metrics}
         for name, value in metrics.items():
             totals[name] += value
+        if joint8:
+            per_digit[str(environment_class.FIXED_DIGIT)] = dict(metrics)
     averaged = {
         name: value / len(cases)
         for name, value in totals.items()
     }
+    if joint8:
+        averaged["per_digit"] = per_digit
     return averaged if return_metrics else averaged["phase_normalized_position_l1"]
 
 
@@ -442,7 +479,7 @@ def _balanced_protocol3_directions(batch_size):
     return balanced_direction_indices(batch_size)
 
 
-def _protocol3_training_condition(env_list, hp):
+def _protocol3_training_condition(env_list, hp, completed_updates=None):
     schedule = hp["condition_schedule"]
     if schedule == "independent_random_digit_delay_v1":
         digit_index, delay_index, environment_seed = sample_protocol3_update(
@@ -457,6 +494,23 @@ def _protocol3_training_condition(env_list, hp):
         "protocol3_corner_ease_single_condition",
     }:
         environment_class = env_list[0]
+        delay_index = hp["gate2_delay_index"]
+        environment_seed = random.randrange(2**32)
+        directions = np.full(
+            hp["batch_size"],
+            hp["gate2_direction_index"],
+            dtype=np.int64,
+        )
+    elif schedule == JOINT8_SCHEDULE:
+        if completed_updates is None:
+            raise ValueError("joint8 schedule requires the completed-update cursor")
+        actual_digits = tuple(int(env.FIXED_DIGIT) for env in env_list)
+        if actual_digits != JOINT8_DIGITS:
+            raise ValueError("joint8 environment order differs from the frozen digits")
+        selected_digit = joint8_digit_for_update(
+            int(completed_updates), int(hp["seed"])
+        )
+        environment_class = env_list[JOINT8_DIGITS.index(selected_digit)]
         delay_index = hp["gate2_delay_index"]
         environment_seed = random.randrange(2**32)
         directions = np.full(
@@ -985,11 +1039,17 @@ def train_subsets_base_model(
     minimal_corner_ease_outputs = (
         artifact_profile == "protocol3_corner_ease_minimal_v1"
     )
+    minimal_joint8_outputs = artifact_profile == "protocol3_joint8_minimal_v1"
     if minimal_corner_ease_outputs and hp.get("condition_schedule") != (
         "protocol3_corner_ease_single_condition"
     ):
         raise ValueError("corner-ease artifact profile requires its frozen schedule")
-    if not minimal_corner_ease_outputs:
+    if minimal_joint8_outputs and hp.get("condition_schedule") != JOINT8_SCHEDULE:
+        raise ValueError("joint8 artifact profile requires its frozen schedule")
+    minimal_protocol3_outputs = (
+        minimal_corner_ease_outputs or minimal_joint8_outputs
+    )
+    if not minimal_protocol3_outputs:
         save_hp(hp, model_path)
 
     device = torch.device("cpu")
@@ -1035,6 +1095,7 @@ def train_subsets_base_model(
     schedule = hp.get("condition_schedule")
     gate2 = schedule == "protocol3_gate2_single_condition"
     corner_ease_selection = schedule == "protocol3_corner_ease_single_condition"
+    joint8_selection = schedule == JOINT8_SCHEDULE
     single_condition = schedule in {
         "protocol3_gate2_single_condition",
         "protocol3_corner_settle_single_condition",
@@ -1053,6 +1114,31 @@ def train_subsets_base_model(
         "passing": os.path.join(model_path, ".corner_ease_passing.pt"),
         "mean": os.path.join(model_path, ".corner_ease_mean.pt"),
     }
+    joint8_pass_streak = 0
+    joint8_current_streak_best = None
+    joint8_stable_best = None
+    joint8_passing_best = None
+    joint8_general_best = None
+    joint8_stable_intervals = []
+    joint8_current_interval_start = None
+    joint8_temp_paths = {
+        "current": os.path.join(model_path, ".joint8_current.pt"),
+        "stable": os.path.join(model_path, ".joint8_stable.pt"),
+        "passing": os.path.join(model_path, ".joint8_passing.pt"),
+        "general": os.path.join(model_path, ".joint8_general.pt"),
+    }
+    if joint8_selection:
+        if tuple(hp.get("joint8_digits", ())) != JOINT8_DIGITS:
+            raise ValueError("joint8 hp digits differ from the frozen design")
+        if (
+            int(hp["batch_size"]) != 8
+            or int(hp["epochs"]) != JOINT8_TOTAL_UPDATES
+            or int(hp["save_iter"]) != 800
+            or int(hp["gate2_direction_index"]) != 0
+            or PROTOCOL3_DELAYS[int(hp["gate2_delay_index"])] != 50
+            or float(hp["lr"]) != 0.001
+        ):
+            raise ValueError("joint8 hp boundary differs from the frozen design")
     experimental_resume_learning_rate = hp.get(
         "experimental_resume_learning_rate"
     )
@@ -1149,6 +1235,8 @@ def train_subsets_base_model(
         corner_ease_lr_continuation
     ):
         raise ValueError("corner-ease overfit does not support this continuation")
+    if joint8_selection and resume_checkpoint is not None:
+        raise ValueError("joint8 does not authorize continuation or resume")
     if resume_checkpoint is not None:
         if not protocol3:
             raise ValueError("only protocol3 supports continuation resume")
@@ -1356,8 +1444,10 @@ def train_subsets_base_model(
             raise ValueError("target completed updates exceed the frozen maximum")
     if stop_after_updates <= completed_updates:
         raise ValueError("target completed updates must exceed the checkpoint state")
-    if single_condition and stop_after_updates % int(hp["save_iter"]) != 0:
-        raise ValueError("single-condition target must end on a validation boundary")
+    if (
+        single_condition or joint8_selection
+    ) and stop_after_updates % int(hp["save_iter"]) != 0:
+        raise ValueError("Protocol3 target must end on a validation boundary")
 
     def protocol3_training_state():
         state = {
@@ -1379,6 +1469,14 @@ def train_subsets_base_model(
                 "mean_best": corner_ease_mean_best,
                 "stable_intervals": list(corner_ease_stable_intervals),
             }
+        if joint8_selection:
+            state["joint8_selection"] = {
+                "pass_streak": joint8_pass_streak,
+                "stable_best": joint8_stable_best,
+                "passing_best": joint8_passing_best,
+                "general_best": joint8_general_best,
+                "stable_intervals": list(joint8_stable_intervals),
+            }
         return state
 
     def validate_protocol3_checkpoint(*, count_gate2_pass):
@@ -1393,15 +1491,30 @@ def train_subsets_base_model(
         nonlocal corner_ease_passing_best
         nonlocal corner_ease_mean_best
         nonlocal corner_ease_current_interval_start
+        nonlocal joint8_pass_streak
+        nonlocal joint8_current_streak_best
+        nonlocal joint8_stable_best
+        nonlocal joint8_passing_best
+        nonlocal joint8_general_best
+        nonlocal joint8_current_interval_start
+
+        if joint8_selection:
+            validate_joint8_condition_counts(condition_counts, completed_updates)
 
         validation_metrics = _run_validation(
             policy,
             hp,
             env_dict,
-            network_noise=not single_condition,
+            network_noise=not (single_condition or joint8_selection),
             return_metrics=True,
         )
-        if not all(np.isfinite(value) for value in validation_metrics.values()):
+
+        def all_finite(value):
+            if isinstance(value, dict):
+                return all(all_finite(item) for item in value.values())
+            return bool(np.isfinite(value))
+
+        if not all_finite(validation_metrics):
             raise RuntimeError("protocol3 validation produced NaN or Inf")
         test_loss = validation_metrics["phase_normalized_position_l1"]
         last_test_loss = test_loss
@@ -1410,8 +1523,23 @@ def train_subsets_base_model(
             "completed_updates": completed_updates,
             **validation_metrics,
         }
+        if joint8_selection:
+            validation_row.update(
+                {
+                    "completed_optimizer_step_learning_rate": (
+                        None
+                        if completed_updates == 0
+                        else joint8_learning_rate(completed_updates - 1)
+                    ),
+                    "next_optimizer_step_learning_rate": (
+                        joint8_learning_rate(completed_updates)
+                        if completed_updates < JOINT8_TOTAL_UPDATES
+                        else None
+                    ),
+                }
+            )
         validation_history.append(validation_row)
-        if minimal_corner_ease_outputs:
+        if minimal_protocol3_outputs:
             _append_jsonl(
                 os.path.join(model_path, "metrics.jsonl"),
                 validation_row,
@@ -1429,7 +1557,7 @@ def train_subsets_base_model(
                     **condition_counts,
                 },
             )
-        if not single_condition:
+        if not single_condition and not joint8_selection:
             sentinel_hp = dict(hp)
             sentinel_hp["deterministic_evaluation"] = True
             sentinel_metrics = _run_validation(
@@ -1550,7 +1678,77 @@ def train_subsets_base_model(
                 corner_ease_current_streak_best = None
                 corner_ease_current_interval_start = None
 
-        if not corner_ease_selection:
+        if joint8_selection:
+            if test_loss < best_test_loss:
+                best_test_loss = test_loss
+            selection_row = joint8_selection_record(validation_row)
+            passed_now = bool(selection_row["all_digits_passed"])
+
+            def save_joint8_candidate(path):
+                torch.save(
+                    _checkpoint_payload(
+                        policy,
+                        optimizer,
+                        hp,
+                        completed_updates,
+                        test_loss,
+                        training_state=protocol3_training_state(),
+                    ),
+                    path,
+                )
+
+            if (
+                joint8_general_best is None
+                or joint8_selection_key(selection_row)
+                < joint8_selection_key(joint8_general_best)
+            ):
+                joint8_general_best = dict(selection_row)
+                save_joint8_candidate(joint8_temp_paths["general"])
+            if passed_now and (
+                joint8_passing_best is None
+                or joint8_selection_key(selection_row)
+                < joint8_selection_key(joint8_passing_best)
+            ):
+                joint8_passing_best = dict(selection_row)
+                save_joint8_candidate(joint8_temp_paths["passing"])
+
+            if passed_now:
+                if joint8_pass_streak == 0:
+                    joint8_current_interval_start = completed_updates
+                    joint8_current_streak_best = None
+                joint8_pass_streak += 1
+                if (
+                    joint8_current_streak_best is None
+                    or joint8_selection_key(selection_row)
+                    < joint8_selection_key(joint8_current_streak_best)
+                ):
+                    joint8_current_streak_best = dict(selection_row)
+                    save_joint8_candidate(joint8_temp_paths["current"])
+                if joint8_pass_streak == 3:
+                    joint8_stable_intervals.append(
+                        {
+                            "start_update": joint8_current_interval_start,
+                            "end_update": completed_updates,
+                        }
+                    )
+                elif joint8_pass_streak > 3:
+                    joint8_stable_intervals[-1]["end_update"] = completed_updates
+                if joint8_pass_streak >= 3 and (
+                    joint8_stable_best is None
+                    or joint8_selection_key(joint8_current_streak_best)
+                    < joint8_selection_key(joint8_stable_best)
+                ):
+                    joint8_stable_best = dict(joint8_current_streak_best)
+                    shutil.copy2(
+                        joint8_temp_paths["current"],
+                        joint8_temp_paths["stable"],
+                    )
+            else:
+                joint8_pass_streak = 0
+                joint8_current_streak_best = None
+                joint8_current_interval_start = None
+
+        if not corner_ease_selection and not joint8_selection:
             is_best = test_loss <= best_test_loss
             if is_best:
                 best_test_loss = test_loss
@@ -1598,7 +1796,9 @@ def train_subsets_base_model(
                 delay_index,
                 environment_seed,
                 reset_options,
-            ) = _protocol3_training_condition(env_list, hp)
+            ) = _protocol3_training_condition(
+                env_list, hp, completed_updates=completed_updates
+            )
             env = env_class(effector=effector, **hp.get("env_kwargs", {}))
             _record_protocol3_condition(
                 condition_counts,
@@ -1652,6 +1852,10 @@ def train_subsets_base_model(
         losses.append(loss.item())
         
         # backward pass & update weights
+        if joint8_selection:
+            expected_learning_rate = joint8_learning_rate(completed_updates)
+            for parameter_group in optimizer.param_groups:
+                parameter_group["lr"] = expected_learning_rate
         optimizer.zero_grad() 
         loss.backward()
 
@@ -1678,7 +1882,7 @@ def train_subsets_base_model(
                     batch, progress_target, mean_loss
                 )
             )
-            if not minimal_corner_ease_outputs:
+            if not minimal_protocol3_outputs:
                 _append_jsonl(
                     os.path.join(model_path, "training_position_metrics.jsonl"),
                     {
@@ -1771,6 +1975,58 @@ def train_subsets_base_model(
             if os.path.isfile(temporary):
                 os.remove(temporary)
 
+    joint8_selection_summary = None
+    if joint8_selection:
+        if joint8_stable_best is not None:
+            selection_status = "STABLE_PASS"
+            selected = joint8_stable_best
+            selected_path = joint8_temp_paths["stable"]
+        elif joint8_passing_best is not None:
+            selection_status = "PASS_UNSTABLE"
+            selected = joint8_passing_best
+            selected_path = joint8_temp_paths["passing"]
+        else:
+            selection_status = "FAIL"
+            selected = joint8_general_best
+            selected_path = joint8_temp_paths["general"]
+        if selected is None or not os.path.isfile(selected_path):
+            raise RuntimeError("joint8 checkpoint selection is incomplete")
+        best_checkpoint_update = int(selected["completed_updates"])
+        shutil.copy2(selected_path, os.path.join(model_path, model_file))
+        joint8_selection_summary = {
+            "status": selection_status,
+            "best_update": best_checkpoint_update,
+            "best_record": dict(selected),
+            "stable_intervals": list(joint8_stable_intervals),
+            "selection_rule": {
+                "stable_consecutive_evaluations": 3,
+                "ranking": [
+                    "maximize_passing_digit_count",
+                    "minimize_worst_relative_threshold_violation",
+                    "minimize_macro_normalized_mean_error",
+                    "earlier_update",
+                ],
+            },
+        }
+        independently_selected = select_joint8_validation_history(
+            validation_history
+        )
+        for key in (
+            "status",
+            "best_update",
+            "best_record",
+            "stable_intervals",
+            "selection_rule",
+        ):
+            if joint8_selection_summary[key] != independently_selected[key]:
+                raise RuntimeError(
+                    "online joint8 checkpoint selection differs from the "
+                    "frozen history rule"
+                )
+        for temporary in joint8_temp_paths.values():
+            if os.path.isfile(temporary):
+                os.remove(temporary)
+
     final_model_file = hp.get("final_model_file")
     if final_model_file:
         training_state = protocol3_training_state() if protocol3 else None
@@ -1815,6 +2071,7 @@ def train_subsets_base_model(
             "validation_history": validation_history if protocol3 else None,
             "early_audit_pending": early_audit_pending,
             "corner_ease_selection": corner_ease_selection_summary,
+            "joint8_selection": joint8_selection_summary,
         }
 
 

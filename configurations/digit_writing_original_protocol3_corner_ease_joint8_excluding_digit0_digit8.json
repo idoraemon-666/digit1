@@ -1,0 +1,125 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_corner_ease_joint8",
+  "variant": "corner_ease_v3_joint8_excluding_digit0_digit8_seed42",
+  "seed": 42,
+  "validation_seed": 1042,
+  "device": "cpu",
+  "geometry_config": "configurations/digit_writing_original_protocol3_geometry_scale2p50_ref100_corner_ease_v3.json",
+  "source_gate2_config": "configurations/digit_writing_original_protocol3_gate2_scale2p50_ref100.json",
+  "scale_multiplier": 2.5,
+  "timing_mode": "fixed_segment_timing_corner_ease_v3",
+  "selected_reference_steps": 100,
+  "train_digits": [1, 2, 3, 4, 5, 6, 7, 9],
+  "excluded_digits": [0, 8],
+  "direction_index": 0,
+  "delay_steps": 50,
+  "digit_movement_intervals": {
+    "1": 60,
+    "2": 210,
+    "3": 180,
+    "4": 200,
+    "5": 230,
+    "6": 200,
+    "7": 130,
+    "9": 200
+  },
+  "condition_schedule": "protocol3_corner_ease_joint8_balanced_blocks_v1",
+  "digit_order_within_block": "sha256_ranked_permutation_v1",
+  "model": {
+    "network": "rnn",
+    "input_size": 28,
+    "hidden_size": 256,
+    "output_size": 6,
+    "activation": "softplus",
+    "recurrent_noise_std": 0.1,
+    "input_noise_std": 0.01,
+    "constrained": false,
+    "rnn_dt_ms": 10,
+    "rnn_tau_ms": 20,
+    "batch_first": true
+  },
+  "optimizer": {
+    "name": "Adam",
+    "learning_rate": 0.001,
+    "grad_clip_norm": 1.0,
+    "schedule": [
+      {
+        "per_digit_exposure_start": 1,
+        "per_digit_exposure_end": 6000,
+        "global_update_start": 1,
+        "global_update_end": 48000,
+        "learning_rate": 0.001
+      },
+      {
+        "per_digit_exposure_start": 6001,
+        "per_digit_exposure_end": 8000,
+        "global_update_start": 48001,
+        "global_update_end": 64000,
+        "learning_rate": 0.0003
+      }
+    ],
+    "preserve_adam_state_at_switch": true
+  },
+  "training": {
+    "batch_size": 8,
+    "updates_per_digit": 8000,
+    "max_updates": 64000,
+    "validation_interval": 800,
+    "samples_per_digit": 64000,
+    "total_training_samples": 512000
+  },
+  "position_loss": {
+    "type": "phase_normalized_l1",
+    "stable_weight": 0.1,
+    "delay_weight": 0.1,
+    "movement_weight": 0.6,
+    "hold_weight": 0.2
+  },
+  "regularization": {
+    "l1_rate": 0.001,
+    "l1_weight": 0.001,
+    "l1_muscle_act": 0.01,
+    "simple_dynamics_weight": 0.001
+  },
+  "checkpoint_selection": {
+    "mean_max": 0.08,
+    "endpoint_max": 0.05,
+    "path_ratio_min": 0.85,
+    "path_ratio_max": 1.15,
+    "stable_consecutive_evaluations": 3,
+    "ranking": [
+      "maximize_passing_digit_count",
+      "minimize_worst_relative_threshold_violation",
+      "minimize_macro_normalized_mean_error",
+      "earlier_update"
+    ]
+  },
+  "corner_ease": {
+    "mapping_version": "fixed_minimax_rational_step_table_v3",
+    "turn_angle_deg": 60.0,
+    "base_window_intervals": 10,
+    "extra_intervals_per_side": 5,
+    "resampled_window_intervals": 15,
+    "step_weight_denominator": 20,
+    "step_weight_numerators": [20, 20, 20, 20, 20, 19, 17, 15, 13, 11, 9, 7, 5, 3, 1],
+    "incoming_speed_ratio_max": 0.1,
+    "outgoing_speed_ratio_max": 0.1,
+    "automatic_extension": false,
+    "automatic_second_seed": false,
+    "automatic_full10": false
+  },
+  "geometry_identity": {
+    "version": "source-derived-temporal-v1",
+    "source_geometry_sha256": "canonical-json primitive definition before spatial derivation",
+    "derived_path_geometry_sha256": "ordered design-unit continuous path before temporal sampling",
+    "temporal_sampling_sha256": "ordered design-unit samples after timing",
+    "legacy_canonical_template_sha256_redefined": false
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/joint8_excluding_digit0_digit8/seed42",
+    "initial_checkpoint": "initial_checkpoint.pt",
+    "best_checkpoint": "best_checkpoint.pt",
+    "final_checkpoint": "final_checkpoint.pt"
+  }
+}
