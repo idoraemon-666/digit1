@@ -401,6 +401,27 @@ def _verify_stage_manifest(path: Path, output_root: Path) -> dict[str, Any]:
     return manifest
 
 
+def _parameter_flag_audit(policy: Any) -> dict[str, Any]:
+    parameters = list(policy.named_parameters())
+    if not parameters:
+        raise RuntimeError("loaded policy has no named parameters")
+    if any(parameter.grad is not None for _, parameter in parameters):
+        raise RuntimeError("loaded policy has unexpected parameter gradients")
+    return {
+        "parameter_tensor_count": len(parameters),
+        "trainable_parameter_tensor_count": sum(
+            bool(parameter.requires_grad) for _, parameter in parameters
+        ),
+        "frozen_parameter_tensor_count": sum(
+            not parameter.requires_grad for _, parameter in parameters
+        ),
+        "frozen_parameter_names": [
+            name for name, parameter in parameters if not parameter.requires_grad
+        ],
+        "parameter_gradients_absent": True,
+    }
+
+
 def validate_checkpoint_identity(
     repository_root: Path,
     config_path: Path,
@@ -461,8 +482,7 @@ def validate_checkpoint_identity(
     raw_model_hash = state_dict_sha256(checkpoint["agent_state_dict"])
     if model_hash != raw_model_hash:
         raise RuntimeError("loaded policy state differs from checkpoint model state")
-    if any(parameter.requires_grad is False for parameter in policy.parameters()):
-        raise RuntimeError("loaded policy parameter flags are unexpected")
+    parameter_flag_audit = _parameter_flag_audit(policy)
     del policy
     if torch.is_grad_enabled() is False:
         raise RuntimeError("global torch gradient state was unexpectedly changed")
@@ -483,6 +503,7 @@ def validate_checkpoint_identity(
         "checkpoint_update": int(state["completed_updates"]),
         "checkpoint_variant": checkpoint["variant"],
         "model_state_sha256": model_hash,
+        "parameter_flag_audit": parameter_flag_audit,
         "optimizer_used": False,
     }
     _write_json(frozen_config_path, config)

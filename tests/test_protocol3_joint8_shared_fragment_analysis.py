@@ -11,6 +11,7 @@ import numpy as np
 from digit_writing.protocol3_joint8_shared_fragment_analysis import (
     ANALYSIS_DIGITS,
     FragmentOccurrence,
+    _parameter_flag_audit,
     _candidate_maximal_matches,
     _eligible_interval_mask,
     _expected_families,
@@ -93,6 +94,24 @@ class GeometryInvariantTests(unittest.TestCase):
 
 
 class FrozenConfigAndOracleTests(unittest.TestCase):
+    def test_mixed_trainable_and_frozen_parameters_are_audited_not_rejected(self):
+        import torch
+
+        class MixedPolicy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.trainable = torch.nn.Parameter(torch.ones(2))
+                self.frozen = torch.nn.Parameter(
+                    torch.zeros(3), requires_grad=False
+                )
+
+        audit = _parameter_flag_audit(MixedPolicy())
+        self.assertEqual(audit["parameter_tensor_count"], 2)
+        self.assertEqual(audit["trainable_parameter_tensor_count"], 1)
+        self.assertEqual(audit["frozen_parameter_tensor_count"], 1)
+        self.assertEqual(audit["frozen_parameter_names"], ["frozen"])
+        self.assertTrue(audit["parameter_gradients_absent"])
+
     def test_exact_key_validation_rejects_extra_setting(self):
         config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         changed = copy.deepcopy(config)
