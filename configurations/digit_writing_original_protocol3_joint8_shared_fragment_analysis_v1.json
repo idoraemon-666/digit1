@@ -1,0 +1,114 @@
+{
+  "protocol": "digit_writing_original_protocol3",
+  "run_kind": "protocol3_joint8_shared_fragment_analysis",
+  "variant": "corner_ease_v3_joint8_shared_fragment_analysis_v1",
+  "training_identity": {
+    "repository_head": "bd39e09b2203296f459b7d723bd4f9bcacd69ae9",
+    "training_config": "configurations/digit_writing_original_protocol3_corner_ease_joint8_excluding_digit0_digit8.json",
+    "digits": [1, 2, 3, 4, 5, 6, 7, 9]
+  },
+  "checkpoint": {
+    "update": 61600,
+    "variant": "corner_ease_v3_joint8_excluding_digit0_digit8_seed42",
+    "sha256": "df0e634021bf24eae1018c2d54325258b20457d67e2db0656921257d3342d345"
+  },
+  "condition": {
+    "direction_index": 0,
+    "delay_index": 1,
+    "delay_steps": 50,
+    "reference_steps": 100,
+    "speed_condition": 0
+  },
+  "fragment_matching": {
+    "allow_translation": true,
+    "allow_rotation": true,
+    "allow_scaling": false,
+    "allow_reflection": false,
+    "allow_reversal": false,
+    "length_tolerance_m": 1e-10,
+    "turn_tolerance_rad": 1e-9,
+    "rigid_residual_tolerance_m": 1e-10,
+    "minimum_discovery_intervals": 2,
+    "minimum_analysis_intervals": 30,
+    "corner_base_window_intervals": 10,
+    "corner_actual_window_intervals": 15,
+    "expected_family_count": 3,
+    "expected_primary_pair_count": 4,
+    "expected_families": [
+      {
+        "family_id": "curve_a_shared_core",
+        "intervals": 70,
+        "occurrences": [[2, 0, 70], [3, 0, 70]]
+      },
+      {
+        "family_id": "curve_b_shared_core",
+        "intervals": 80,
+        "occurrences": [[3, 100, 180], [5, 150, 230]]
+      },
+      {
+        "family_id": "equal_length_straight_core",
+        "intervals": 50,
+        "occurrences": [[2, 80, 130], [2, 160, 210], [7, 0, 50]]
+      }
+    ]
+  },
+  "collection": {
+    "deterministic_reset_seed": 1042,
+    "deterministic_batch_size": 1,
+    "stochastic_rollouts": 64,
+    "stochastic_batch_size": 8,
+    "stochastic_batch_count": 8,
+    "stochastic_seed_base": 42042000,
+    "environment_observation_noise": false,
+    "deterministic_network_noise": false,
+    "stochastic_network_noise": true
+  },
+  "principal_angles": {
+    "components": 12,
+    "variance_explained_warning_below": 0.95
+  },
+  "cross_projection": {
+    "components": 12
+  },
+  "cca": {
+    "pca_components": 10,
+    "canonical_components": 10
+  },
+  "procrustes": {
+    "center": true,
+    "unit_frobenius_norm": true,
+    "allow_neural_reflection": true
+  },
+  "fixed_points": {
+    "phases": [0.0, 0.25, 0.5, 0.75, 1.0],
+    "interpolation_alphas": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+    "dtype": "float64",
+    "optimizer": "Adam",
+    "learning_rate": 0.01,
+    "maximum_steps": 10000,
+    "residual_rms_max": 1e-6,
+    "dedup_activation_rms_max": 1e-4,
+    "initial_states": 64
+  },
+  "dsa": {
+    "n_delays": 5,
+    "delay_interval": 1,
+    "steps_ahead": 1,
+    "rank": 10,
+    "ridge": 1e-8,
+    "score_method": "normalized_euclidean",
+    "optimizer": "Adam",
+    "learning_rate": 0.01,
+    "iterations": 200,
+    "initializations": ["identity", "odd_permutation"]
+  },
+  "behavior_strata": {
+    "pass_digits": [1, 2, 9],
+    "fail_digits": [3, 4, 5, 6, 7],
+    "allowed_labels": ["PASS-PASS", "PASS-FAIL", "FAIL-FAIL"]
+  },
+  "output": {
+    "directory": "runs/digit_writing_original_protocol3/scale2p50/ref100/corner_ease_v3/joint8_excluding_digit0_digit8/seed42_shared_fragment_analysis_v1",
+    "artifact_version": "protocol3_joint8_shared_fragment_analysis_v1"
+  }
+}
