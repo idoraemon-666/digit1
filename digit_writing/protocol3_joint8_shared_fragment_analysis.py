@@ -777,7 +777,6 @@ def prepare_fragments(
     geometry = load_geometry_config(geometry_path)
     trajectories: dict[int, np.ndarray] = {}
     masks: dict[int, np.ndarray] = {}
-    movement_intervals = training_config["digit_movement_intervals"]
     matching = config["fragment_matching"]
     for digit in ANALYSIS_DIGITS:
         trajectory = build_digit_trajectory(
@@ -786,7 +785,6 @@ def prepare_fragments(
             int(config["condition"]["reference_steps"]),
             spatial_angle_rad=0.0,
             anchor=(0.0, 0.0),
-            movement_intervals_override=int(movement_intervals[str(digit)]),
         )
         trajectories[digit] = np.asarray(trajectory.points, dtype=np.float64)
         masks[digit] = _eligible_interval_mask(
@@ -1958,12 +1956,12 @@ def pavf_distance(
             rotation = torch.linalg.solve(identity + skew, identity - skew)
             transform = rotation if initialization == "identity" else rotation @ odd_permutation
             residual = first_tensor - transform @ second_tensor @ transform.T
-            loss = torch.linalg.matrix_norm(residual, ord="fro")
-            if not torch.isfinite(loss):
+            objective = torch.sum(residual * residual)
+            if not torch.isfinite(objective):
                 raise FloatingPointError("PAVF optimization produced non-finite loss")
-            loss.backward()
+            objective.backward()
             optimizer.step()
-            loss_curve.append(float(loss.detach()))
+            loss_curve.append(float(torch.sqrt(objective.detach())))
         with torch.no_grad():
             skew = raw - raw.T
             rotation = torch.linalg.solve(identity + skew, identity - skew)

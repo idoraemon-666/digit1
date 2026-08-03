@@ -119,9 +119,6 @@ class FrozenConfigAndOracleTests(unittest.TestCase):
                 100,
                 spatial_angle_rad=0.0,
                 anchor=(0.0, 0.0),
-                movement_intervals_override=int(
-                    training["digit_movement_intervals"][str(digit)]
-                ),
             )
             trajectories[digit] = np.asarray(trajectory.points)
             masks[digit] = _eligible_interval_mask(trajectory, 15)
@@ -211,8 +208,12 @@ class FixedPointTests(unittest.TestCase):
         class LinearMRNN(torch.nn.Module):
             def __init__(self):
                 super().__init__()
-                self.register_buffer("matrix", torch.diag(torch.tensor([0.4, 0.7])))
-                self.register_buffer("bias", torch.tensor([0.3, -0.2]))
+                self.register_buffer(
+                    "matrix", torch.diag(torch.tensor([0.4, 0.7], dtype=torch.float64))
+                )
+                self.register_buffer(
+                    "bias", torch.tensor([0.3, -0.2], dtype=torch.float64)
+                )
                 self.activation = lambda value: value
 
             def forward(self, x, observation, noise=False, h0=None):
